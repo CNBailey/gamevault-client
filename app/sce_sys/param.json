@@ -2,16 +2,21 @@
   "ageLevel": {
     "default": 0
   },
+  "amm": {
+    "multimapVaRangeInGib": 512,
+    "pagetableMemorySizeInMib": 256,
+    "vaRangeInGib": 512
+  },
   "applicationCategoryType": 0,
   "applicationDrmType": "free",
   "attribute": 1644167168,
   "attribute2": 0,
   "attribute3": 1048576,
-  "conceptId": "99687",
+  "conceptId": "99688",
   "contentBadgeType": 1,
   "contentId": "UP9000-PPSA99688_00-GAMEVAULT0000002",
   "contentVersion": "01.000.010",
-  "downloadDataSize": 256,
+  "downloadDataSize": 1024,
   "gameIntent": {
     "permittedIntents": [
       {
@@ -19,12 +24,13 @@
       }
     ]
   },
+  "kernel": {
+    "cpuPageTableSize": 268435456,
+    "gpuPageTableSize": 268435456
+  },
   "localizedParameters": {
     "defaultLanguage": "en-US",
     "en-US": {
-      "titleName": "GameVault"
-    },
-    "en-GB": {
       "titleName": "GameVault"
     }
   },

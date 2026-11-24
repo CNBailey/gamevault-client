@@ -40,6 +40,22 @@ rm -rf "$WORK/.deps" && ln -s "$KIT/.deps" "$WORK/.deps"
 rm -rf "$WORK/src/concepts" && mkdir -p "$WORK/src/concepts"
 cp -a "$root/app/screens/." "$WORK/src/concepts/"
 cp -a "$root/app/overrides/." "$WORK/"
+# Boot markers (see src/runtime/gv_boot_marker.c): how far a launch got.
+python3 - "$WORK/src/main.cpp" <<'PY'
+import sys
+p = sys.argv[1]; s = open(p).read()
+marks = [
+    ('int main()\n{\n', 'int main()\n{\n    gv_boot_mark("boot: main");\n'),
+    ('    gfx::Renderer renderer;\n', '    gv_boot_mark("boot: display open");\n    gfx::Renderer renderer;\n'),
+    ('    demo::Catalog catalog;\n', '    gv_boot_mark("boot: renderer and fonts ready");\n    demo::Catalog catalog;\n'),
+    ('    app::Shell shell(', '    gv_boot_mark("boot: audio ready");\n    app::Shell shell('),
+]
+for old, new in marks:
+    assert s.count(old) == 1, old
+    s = s.replace(old, new)
+s = s.replace('int main()\n', 'extern "C" void gv_boot_mark(const char *line);\n\nint main()\n', 1)
+open(p, 'w').write(s)
+PY
 mkdir -p "$WORK/src/third_party/stb_image"
 cp -p "$root/app/third_party/stb_image/stb_image.h" "$root/app/third_party/stb_image/LICENSE" "$WORK/src/third_party/stb_image/"
 rm -rf "$WORK/sce_sys" && cp -a "$root/app/sce_sys" "$WORK/sce_sys"
