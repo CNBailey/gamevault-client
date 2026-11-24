@@ -3,7 +3,7 @@
 # ps5-homebrew-ui kit, the way NASBridge does: a private copy of the kit with
 # our screens in place of its demo designs.
 #
-# usage: tools/build-app.sh app         -> build/app/PPSA99687 (the app folder)
+# usage: tools/build-app.sh app         -> build/app/PPSA99688 (the app folder)
 #        tools/build-app.sh snapshots   -> build/app-snapshots/*.png (PC preview;
 #                                          needs GameVault running on :8687)
 #
@@ -58,16 +58,16 @@ rm -rf "$WORK/assets/audio/sfx/paper"
 
 case "$mode" in
 app)
-    echo "==> [app] Building PPSA99687"
-    rm -rf "$WORK/dist/PPSA99687"
+    echo "==> [app] Building PPSA99688"
+    rm -rf "$WORK/dist/PPSA99688"
     if ! make --no-print-directory -C "$WORK" app >"$WORK/build.log" 2>&1; then
         tail -60 "$WORK/build.log" >&2
         echo "app build failed (log: $WORK/build.log)" >&2
         exit 1
     fi
     rm -rf "$root/build/app" && mkdir -p "$root/build/app"
-    cp -a "$WORK/dist/PPSA99687" "$root/build/app/PPSA99687"
-    du -sh "$root/build/app/PPSA99687"
+    cp -a "$WORK/dist/PPSA99688" "$root/build/app/PPSA99688"
+    du -sh "$root/build/app/PPSA99688"
     ;;
 snapshots)
     echo "==> [snapshots] Rendering the app with the PC preview"

@@ -26,6 +26,9 @@ FILES = os.path.join(WORK, 'nas')
 os.makedirs(os.path.join(ROOT, 'data'), exist_ok=True)
 os.makedirs(os.path.join(ROOT, 'user', 'app'), exist_ok=True)
 os.makedirs(FILES, exist_ok=True)
+# An old 0.2 tile folder, which GameVault should remove.
+os.makedirs(os.path.join(ROOT, 'data/homebrew/PPSA99687/sce_sys'), exist_ok=True)
+open(os.path.join(ROOT, 'data/homebrew/PPSA99687/.gv-app-id'), 'w').write('old')
 
 
 def free_port():
@@ -300,8 +303,12 @@ try:
     state = call('GET', '/api/state')[1]
     check('connected USB drive shown', 'usb0' in [d['id'] for d in state['drives']])
 
-    # Home-screen tile folder, kept out of the games list.
-    tile = os.path.join(ROOT, 'data/homebrew/PPSA99687')
+    # The old tile's folder (PPSA99687) is removed: it is checked at start-up,
+    # so it was planted before this run began (see the top of the file).
+    check('old tile folder removed', not os.path.exists(os.path.join(ROOT, 'data/homebrew/PPSA99687')))
+
+    # Home-screen app folder, kept out of the games list.
+    tile = os.path.join(ROOT, 'data/homebrew/PPSA99688')
     for _ in range(50):
         if os.path.exists(os.path.join(tile, 'sce_sys/param.json')):
             break
@@ -309,7 +316,7 @@ try:
     check('tile folder written', all(os.path.exists(os.path.join(tile, f)) for f in ('eboot.bin', 'sce_sys/param.json', 'sce_sys/icon0.png')))
     call('POST', '/api/rescan', {})
     state = call('GET', '/api/state')[1]
-    check('tile not listed as a game', all(i['titleId'] != 'PPSA99687' for i in state['installed']) and state['tile']['installed'])
+    check('tile not listed as a game', all(i['titleId'] != 'PPSA99688' for i in state['installed']) and state['tile']['installed'])
     s, _ = call('POST', '/api/open', {})
     check('open request accepted', s == 200)
 

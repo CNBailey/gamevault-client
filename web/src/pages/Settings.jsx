@@ -129,13 +129,23 @@ function SpeedTest({ state, games, notify, onDone }) {
 }
 
 function Diagnostics() {
-  const [lines, setLines] = useState(null);
-  const load = () => ps5.log().then(setLines, (e) => setLines([`Couldn't read the log: ${e.message}`]));
+  const [text, setText] = useState(null);
+  const show = (which) => {
+    if (which === 'service') {
+      ps5.log().then((lines) => setText(lines.length ? lines.join('\n') : 'Nothing logged yet.'), (e) => setText(`Couldn't read the log: ${e.message}`));
+    } else {
+      ps5.diagnostics(which).then(setText, (e) => setText(`Couldn't read the log: ${e.message}`));
+    }
+  };
   return (
     <section class="panel stack">
       <h2>Diagnostics</h2>
-      <div class="row gap"><button class="btn" onClick={load}>{lines ? 'Refresh log' : 'Show log'}</button></div>
-      {lines && <pre class="log">{lines.length ? lines.join('\n') : 'Nothing logged yet.'}</pre>}
+      <div class="row gap wrap">
+        <button class="btn" onClick={() => show('service')}>Service log</button>
+        <button class="btn" onClick={() => show('app')}>Home-screen app log</button>
+        <button class="btn" onClick={() => show('smp')}>ShadowMountPlus log</button>
+      </div>
+      {text != null && <pre class="log">{text}</pre>}
     </section>
   );
 }

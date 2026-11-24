@@ -9,6 +9,8 @@
 void platform_init(void);
 /* True when a drive is really mounted at this console path (not just an empty folder). */
 bool platform_is_mounted(const char *console_path);
+/* Removes an app from the home screen (and the console's app list). 0 on success. */
+int platform_uninstall_app(const char *title_id);
 
 /* Directory for settings, the queue and resume data. */
 const char *platform_data_dir(void);

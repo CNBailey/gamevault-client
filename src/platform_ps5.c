@@ -56,6 +56,7 @@ typedef struct playgo_info {
 _Static_assert(sizeof(playgo_info_t) == 0x2700, "PlayGoInfo layout");
 
 int sceAppInstUtilInitialize(void);
+int sceAppInstUtilAppUnInstall(const char *title_id);
 int sceAppInstUtilInstallByPackage(const pkg_metadata_t *, pkg_info_t *, playgo_info_t *);
 
 static bool appinst_ready = false;
@@ -130,4 +131,10 @@ bool platform_is_mounted(const char *console_path) {
   if (statfs(console_path, &st)) return false;
   /* A drive that isn't connected leaves an empty folder on the system disk. */
   return !strcmp(st.f_mntonname, console_path);
+}
+
+int platform_uninstall_app(const char *title_id) {
+  if (!appinst_ready && sceAppInstUtilInitialize() != 0) return -1;
+  appinst_ready = true;
+  return sceAppInstUtilAppUnInstall(title_id);
 }

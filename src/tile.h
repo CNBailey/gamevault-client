@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include "util.h"
 
-#define TILE_TITLE_ID "PPSA99687"
+#define TILE_TITLE_ID "PPSA99688"
 #define TILE_DIR "/data/homebrew/" TILE_TITLE_ID
 
 /* Puts the tile's app folder in place and starts the update check. */

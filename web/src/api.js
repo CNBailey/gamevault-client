@@ -29,6 +29,7 @@ export const ps5 = {
   notifyTest: () => request(local('/api/notify-test'), { method: 'POST' }),
   quit: () => request(local('/api/quit'), { method: 'POST' }),
   log: () => request(local('/api/log')),
+  diagnostics: (file) => fetch(local(`/api/diagnostics?file=${file}`)).then((r) => r.text()),
   speedTest: (gameId) => request(local('/api/speed-test'), { method: 'POST', body: { gameId } }),
   updateCheck: () => request(local('/api/update-check'), { method: 'POST' }),
   // GameVault restarts as the new version; the request usually ends without an answer.

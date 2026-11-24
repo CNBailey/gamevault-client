@@ -20,7 +20,7 @@ GameVault keeps running until the PS5 is turned off or put in rest mode. Load it
 
 ## The home-screen app
 
-GameVault puts a native PS5 app, **GameVault**, in `/data/homebrew/PPSA99687`, and ShadowMountPlus adds it to the home screen (load ShadowMountPlus again if it doesn't appear). It is drawn with OpenGL by the [ps5-homebrew-ui](https://github.com/J7mbo/ps5-homebrew-ui) kit, the way [NASBridge](https://github.com/J7mbo/nasbridge-ps5) does it, and has the same sections as the browser version: Library, the game page, Downloads, Storage and Settings (L1 / R1 switch sections; the server address is typed with an on-screen keyboard).
+GameVault puts a native PS5 app, **GameVault**, in `/data/homebrew/PPSA99688`, and ShadowMountPlus adds it to the home screen (load ShadowMountPlus again if it doesn't appear). It is drawn with OpenGL by the [ps5-homebrew-ui](https://github.com/J7mbo/ps5-homebrew-ui) kit, the way [NASBridge](https://github.com/J7mbo/nasbridge-ps5) does it, and has the same sections as the browser version: Library, the game page, Downloads, Storage and Settings (L1 / R1 switch sections; the server address is typed with an on-screen keyboard).
 
 The app is only a window: the downloads run in the background service (`gamevault.elf`), so they carry on when the app is closed. If the service isn't running when you open the app, the app starts it by sending the copy of `gamevault.elf` kept in its folder to the ELF loader on port 9021 (or 9027).
 
@@ -89,7 +89,7 @@ The payload serves a small JSON API on port 8687, used by the interface:
 cd web && npm ci && npm run build && cd ..
 
 # Home-screen app (clang-18, lld-18, ninja; fetches the UI kit and its SDKs)
-tools/build-app.sh app     # build/app/PPSA99687
+tools/build-app.sh app     # build/app/PPSA99688
 
 # PS5 payload, with the app inside (needs the ps5-payload-sdk)
 export PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk

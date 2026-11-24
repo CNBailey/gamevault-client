@@ -20,6 +20,7 @@
 #include "ui/glyphs.hpp"
 #include "ui/motion.hpp"
 #include "ui/theme.hpp"
+#include "platform/ps5/system.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -398,6 +399,7 @@ class GameVault final : public app::Concept
         prompt_.keyboard.style.bindings = ui::KeyboardBindings::standard();
         prompt_.keyboard.set_layouts({ui::KeyboardLayout::letters(), ui::KeyboardLayout::symbols()});
         snapshot_ = std::getenv("GV_SNAPSHOT") != nullptr;
+        sys::log("[GV] GameVault app starting");
         status_line_ = "Connecting to GameVault on this PS5...";
         if (snapshot_)
             load_everything_now();
@@ -656,9 +658,14 @@ class GameVault final : public app::Concept
                                ? "Couldn't start GameVault: " + error
                                : "GameVault isn't running. Load gamevault.elf with your payload loader.";
             }
+            if (!note.empty() || !r.connected)
+                sys::log("[GV] service: %s %s", r.connected ? "answering" : "not answering", note.c_str());
             api_.post([this, r, note] {
                 state_busy_ = false;
+                const bool was = service_ok_;
                 apply_state(r);
+                if (service_ok_ && !was)
+                    sys::log("[GV] connected to the service (%s)", state_.version.c_str());
                 if (!service_ok_)
                     status_line_ = !note.empty() ? note
                                                  : "GameVault isn't running on this PS5. Load gamevault.elf with your payload loader.";

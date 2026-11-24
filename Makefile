@@ -32,11 +32,11 @@ build/assets.c: tools/embed.py $(shell find web/dist -type f 2>/dev/null)
 	@test -f web/dist/index.html || (echo "Build the interface first: cd web && npm ci && npm run build" && false)
 	python3 tools/embed.py web/dist $@
 
-build/app/PPSA99687/eboot.bin: $(shell find app -type f) tools/build-app.sh VERSION
+build/app/PPSA99688/eboot.bin: $(shell find app -type f) tools/build-app.sh VERSION
 	tools/build-app.sh app
 
-build/app.pack: build/app/PPSA99687/eboot.bin tools/pack-app.py
-	python3 tools/pack-app.py build/app/PPSA99687 $@ build/app.id
+build/app.pack: build/app/PPSA99688/eboot.bin tools/pack-app.py
+	python3 tools/pack-app.py build/app/PPSA99688 $@ build/app.id
 
 build/ps5/app_blob.o: src/app_blob.S build/app.pack
 	@mkdir -p $(@D)

@@ -14,7 +14,7 @@
   "attribute3": 1048576,
   "conceptId": "99687",
   "contentBadgeType": 1,
-  "contentId": "UP9000-PPSA99687_00-GAMEVAULT0000001",
+  "contentId": "UP9000-PPSA99688_00-GAMEVAULT0000002",
   "contentVersion": "01.000.010",
   "downloadDataSize": 256,
   "gameIntent": {
@@ -45,6 +45,6 @@
   },
   "requiredSystemSoftwareVersion": "0x0000000000000000",
   "sdkVersion": "0x0000000000000000",
-  "titleId": "PPSA99687",
+  "titleId": "PPSA99688",
   "versionFileUri": ""
 }

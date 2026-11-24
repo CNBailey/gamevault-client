@@ -74,7 +74,7 @@ static void read_elf_version(void) {
 /*
  * The home-screen app (a native PS5 app, app/ in the source) is linked into
  * this payload as one zlib stream (tools/pack-app.py, src/app_blob.S). It is
- * written to /data/homebrew/PPSA99687, where ShadowMountPlus puts it on the
+ * written to /data/homebrew/PPSA99688, where ShadowMountPlus puts it on the
  * home screen, whenever it differs from what is there.
  */
 extern const unsigned char gv_app_pack[];
@@ -281,8 +281,29 @@ static void check(void) {
   log_msg("saved GameVault %s next to the home-screen tile", latest);
 }
 
+/* 0.2 and 0.3.0 used PPSA99687 (a tile that opened the browser, then the first
+   native app). Its home-screen entry can be stuck in a broken state, so it is
+   removed, with its folder, and the app moves to a fresh title ID. */
+static void remove_old_title(void) {
+  const char *old_dir = "/data/homebrew/PPSA99687";
+  char real[600], marker[700], version[700];
+  platform_path(old_dir, real, sizeof real);
+  snprintf(marker, sizeof marker, "%s/.gv-app-id", real);
+  snprintf(version, sizeof version, "%s/gamevault.version", real);
+  char param[700];
+  snprintf(param, sizeof param, "%s/sce_sys/param.json", real);
+  char *p = read_file(param, NULL);
+  bool ours = file_exists(marker) || file_exists(version) || (p && strstr(p, "GAMEVAULT"));
+  free(p);
+  if (!dir_exists(real) || !ours) return;
+  int rc = platform_uninstall_app("PPSA99687");
+  log_msg("removed the old GameVault tile (PPSA99687): uninstall result 0x%08x", (unsigned)rc);
+  rm_rf(real);
+}
+
 static void *tile_thread(void *arg) {
   (void)arg;
+  remove_old_title();
   install_folder();
   read_elf_version();
   char last_server[256] = { 0 };

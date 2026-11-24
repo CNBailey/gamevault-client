@@ -171,6 +171,31 @@ static void api(const http_req_t *req, http_res_t *res) {
     res_json(res, 200, &b);
     return;
   }
+  if (is(req, "GET", "/api/diagnostics")) {
+    /* The end of a log file: the native app's own, or ShadowMountPlus's. */
+    char which[16] = "app";
+    query_param(req->query, "file", which, sizeof which);
+    const char *path = !strcmp(which, "smp") ? "/data/shadowmount/debug.log"
+                     : !strcmp(which, "app1") ? "/data/gamevault/app.log.1" : "/data/gamevault/app.log";
+    char real[600];
+    platform_path(path, real, sizeof real);
+    size_t len = 0;
+    char *text = read_file(real, &len);
+    res->status = 200;
+    res->content_type = "text/plain; charset=utf-8";
+    if (!text) {
+      static const char none[] = "(no log yet)\n";
+      res->body = none;
+      res->body_len = sizeof none - 1;
+      return;
+    }
+    size_t keep = len > 96 * 1024 ? 96 * 1024 : len;
+    memmove(text, text + len - keep, keep);
+    res->owned = text;
+    res->body = text;
+    res->body_len = keep;
+    return;
+  }
   if (is(req, "POST", "/api/open")) { tile_open_later(); ok(res); return; }
   if (is(req, "POST", "/api/update-check")) { tile_check_now(); ok(res); return; }
   if (is(req, "POST", "/api/update")) {

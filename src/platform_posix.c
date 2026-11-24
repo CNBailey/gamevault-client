@@ -80,3 +80,10 @@ bool platform_is_mounted(const char *console_path) {
   snprintf(parent, sizeof parent, "%s/..", real);
   return stat(real, &a) == 0 && stat(parent, &b) == 0 && a.st_dev != b.st_dev;
 }
+
+int platform_uninstall_app(const char *title_id) {
+  char console[128], real[600];
+  snprintf(console, sizeof console, "/user/app/%s", title_id);
+  platform_path(console, real, sizeof real);
+  return rm_rf(real);
+}
