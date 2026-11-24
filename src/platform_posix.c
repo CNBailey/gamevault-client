@@ -9,6 +9,7 @@
 #include "util.h"
 
 #include <stdio.h>
+#include <sys/stat.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -66,4 +67,16 @@ int platform_install_pkg(const char *url, const char *content_id, const char *na
     mkdir_p(p);
   }
   return 0;
+}
+
+bool platform_is_mounted(const char *console_path) {
+  char real[600], parent[700];
+  platform_path(console_path, real, sizeof real);
+  if (!strcmp(console_path, "/user") || !strcmp(console_path, "/data")) return dir_exists(real);
+  /* For tests: a ".mounted" file stands in for a real mount. */
+  snprintf(parent, sizeof parent, "%s/.mounted", real);
+  if (file_exists(parent)) return true;
+  struct stat a, b;
+  snprintf(parent, sizeof parent, "%s/..", real);
+  return stat(real, &a) == 0 && stat(parent, &b) == 0 && a.st_dev != b.st_dev;
 }

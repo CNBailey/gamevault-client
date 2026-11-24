@@ -3,8 +3,8 @@
 VERSION ?= $(shell cat VERSION 2>/dev/null || echo dev)
 CC      ?= cc
 COMMON  := src/util.c src/json.c src/settings.c src/http_server.c src/http_client.c \
-           src/console.c src/downloads.c src/api.c src/main.c
-SRCS    := $(COMMON) src/platform_posix.c build/assets.c
+           src/console.c src/downloads.c src/speedtest.c src/tile.c src/api.c src/main.c
+SRCS    := $(COMMON) src/platform_posix.c build/assets.c build/tile_assets.c
 CFLAGS  += -O1 -g -Wall -Wextra -Werror -Wno-unused-parameter -Wno-format-truncation -Isrc -DGV_VERSION='"$(VERSION)"'
 LDLIBS  += -lpthread
 
@@ -14,6 +14,13 @@ build/assets.c: tools/embed.py $(shell find web/dist -type f 2>/dev/null)
 	@mkdir -p build
 	@if [ -f web/dist/index.html ]; then python3 tools/embed.py web/dist $@; \
 	 else mkdir -p build/empty && echo '<!doctype html><title>GameVault</title><p>Interface not built.' > build/empty/index.html && python3 tools/embed.py build/empty $@; fi
+
+# The tile's eboot.bin needs the PS5 SDK; the Linux build embeds a stand-in.
+build/tile_assets.c: $(wildcard tile/sce_sys/*) tools/embed.py
+	rm -rf build/tile-files && mkdir -p build/tile-files/sce_sys
+	cp tile/sce_sys/* build/tile-files/sce_sys/
+	printf 'stand-in eboot for tests' > build/tile-files/eboot.bin
+	python3 tools/embed.py build/tile-files $@ --name tile --raw
 
 build/gamevault: $(SRCS) $(wildcard src/*.h)
 	$(CC) $(CFLAGS) -o $@ $(SRCS) $(LDLIBS)

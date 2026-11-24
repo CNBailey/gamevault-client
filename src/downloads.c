@@ -16,7 +16,8 @@
 #include "platform.h"
 #include "settings.h"
 
-#define CHUNK ((int64_t)32 << 20)
+#define CHUNK ((int64_t)64 << 20)
+#define WRITE_BUF (8 << 20)   /* write to the drive in large blocks */
 #define MAX_JOBS 256
 #define MAX_RETRIES 6
 
@@ -46,6 +47,7 @@ static int njobs;
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t wake = PTHREAD_COND_INITIALIZER;
 static int id_counter;
+static volatile int halted;   /* set before a restart: start nothing new */
 
 /* ---- persistence --------------------------------------------------------------- */
 
@@ -221,9 +223,33 @@ typedef struct {
 
 typedef struct {
   fctx_t *fc;
-  int64_t offset;   /* where the next byte goes */
-  int64_t written;  /* bytes of this chunk written so far */
+  int64_t offset;   /* file offset of buf[0] */
+  int64_t written;  /* bytes of this chunk received so far */
+  char *buf;        /* WRITE_BUF bytes, written out when full */
+  size_t buf_len;
 } wctx_t;
+
+static void write_failed(fctx_t *fc, int e) {
+  pthread_mutex_lock(&fc->mu);
+  if (!fc->failed) {
+    snprintf(fc->error, sizeof fc->error, e == ENOSPC ? "The drive is full" : "Could not write to the drive (%s)", strerror(e));
+    fc->failed = 1;
+  }
+  pthread_mutex_unlock(&fc->mu);
+}
+
+static int flush_buf(wctx_t *w) {
+  size_t off = 0;
+  while (off < w->buf_len) {
+    ssize_t n = pwrite(w->fc->fd, w->buf + off, w->buf_len - off, w->offset + (int64_t)off);
+    if (n < 0 && errno == EINTR) continue;
+    if (n <= 0) { write_failed(w->fc, n < 0 ? errno : EIO); return -1; }
+    off += (size_t)n;
+  }
+  w->offset += (int64_t)w->buf_len;
+  w->buf_len = 0;
+  return 0;
+}
 
 static void save_chunks_locked(fctx_t *fc) {
   write_file_atomic(fc->state_path, fc->chunks, (size_t)fc->nchunks);
@@ -235,21 +261,14 @@ static int on_body(void *ctx, const char *data, size_t len) {
   throttle(len, &w->fc->job->stop);
   size_t off = 0;
   while (off < len) {
-    ssize_t n = pwrite(w->fc->fd, data + off, len - off, w->offset);
-    if (n < 0 && errno == EINTR) continue;
-    if (n <= 0) {
-      pthread_mutex_lock(&w->fc->mu);
-      if (!w->fc->failed) {
-        snprintf(w->fc->error, sizeof w->fc->error, errno == ENOSPC ? "The drive is full" : "Could not write to the drive (%s)", strerror(errno));
-        w->fc->failed = 1;
-      }
-      pthread_mutex_unlock(&w->fc->mu);
-      return 1;
-    }
-    off += (size_t)n;
-    w->offset += n;
-    w->written += n;
+    size_t n = len - off;
+    if (n > WRITE_BUF - w->buf_len) n = WRITE_BUF - w->buf_len;
+    memcpy(w->buf + w->buf_len, data + off, n);
+    w->buf_len += n;
+    off += n;
+    if (w->buf_len == WRITE_BUF && flush_buf(w)) return 1;
   }
+  w->written += (int64_t)len;
   __atomic_add_fetch(&w->fc->job->done, (int64_t)len, __ATOMIC_RELAXED);
   __atomic_add_fetch(&w->fc->file->done, (int64_t)len, __ATOMIC_RELAXED);
   return 0;
@@ -257,6 +276,14 @@ static int on_body(void *ctx, const char *data, size_t len) {
 
 static void *chunk_worker(void *arg) {
   fctx_t *fc = arg;
+  char *buf = malloc(WRITE_BUF);
+  if (!buf) {
+    write_failed(fc, ENOMEM);
+    pthread_mutex_lock(&fc->mu);
+    fc->active--;
+    pthread_mutex_unlock(&fc->mu);
+    return NULL;
+  }
   for (;;) {
     pthread_mutex_lock(&fc->mu);
     int c = -1;
@@ -270,11 +297,11 @@ static void *chunk_worker(void *arg) {
     int64_t from = (int64_t)c * CHUNK;
     int64_t to = from + CHUNK - 1;
     if (to >= fc->file->size) to = fc->file->size - 1;
-    wctx_t w = { fc, from, 0 };
+    wctx_t w = { fc, from, 0, buf, 0 };
     char err[256] = { 0 };
     http_info_t info;
     int rc = http_get(fc->file->url, from, to, on_body, &w, &info, &fc->job->stop, err, sizeof err);
-    bool complete = rc == 0 && w.written == to - from + 1;
+    bool complete = rc == 0 && w.written == to - from + 1 && flush_buf(&w) == 0;
 
     pthread_mutex_lock(&fc->mu);
     if (complete) {
@@ -296,6 +323,7 @@ static void *chunk_worker(void *arg) {
     pthread_mutex_unlock(&fc->mu);
     if (retry_wait) sleep(2);
   }
+  free(buf);
   pthread_mutex_lock(&fc->mu);
   fc->active--;
   pthread_mutex_unlock(&fc->mu);
@@ -398,7 +426,8 @@ static int download_file(job_t *j, dfile_t *f, char *err, size_t errlen) {
   save_chunks_locked(&fc);
   pthread_mutex_unlock(&fc.mu);
 
-  int conns = settings_get().connections;
+  settings_t cfg = settings_get();
+  int conns = cfg.connections > 0 ? cfg.connections : cfg.measured_connections > 0 ? cfg.measured_connections : 2;
   if (conns > fc.nchunks) conns = fc.nchunks;
   if (conns < 1) conns = 1;
   pthread_t threads[8];
@@ -519,7 +548,8 @@ static void run_ps5(job_t *j) {
         pthread_mutex_unlock(&lock);
         set_state(j, "cancelled");
       } else {
-        set_state(j, "paused");
+        /* stop == 3: GameVault is restarting; the new copy carries on. */
+        set_state(j, j->stop == 3 ? "queued" : "paused");
       }
       return;
     }
@@ -553,7 +583,7 @@ static void run_ps4(job_t *j) {
     for (int i = 0; i < j->nfiles; i++) {
       dfile_t *f = &j->files[i];
       if (category_rank(f->category) != rank) continue;
-      if (j->stop) { set_state(j, j->stop == 2 ? "cancelled" : "paused"); return; }
+      if (j->stop) { set_state(j, j->stop == 2 ? "cancelled" : j->stop == 3 ? "queued" : "paused"); return; }
       char err[256] = { 0 };
       if (platform_install_pkg(f->url, j->content_id, j->title, j->cover, err, sizeof err)) {
         char msg[300];
@@ -580,7 +610,7 @@ static void *worker(void *arg) {
     pthread_mutex_lock(&lock);
     job_t *j = NULL;
     while (!j) {
-      for (int i = 0; i < njobs; i++) {
+      for (int i = 0; i < njobs && !halted; i++) {
         if (!strcmp(jobs[i]->state, "queued")) { j = jobs[i]; break; }
       }
       if (!j) pthread_cond_wait(&wake, &lock);
@@ -930,4 +960,36 @@ int64_t downloads_reserved(const char *drive) {
   }
   pthread_mutex_unlock(&lock);
   return n;
+}
+
+bool downloads_busy(void) {
+  bool busy = false;
+  pthread_mutex_lock(&lock);
+  for (int i = 0; i < njobs; i++) if (active_state(jobs[i]->state) && strcmp(jobs[i]->platform, "PS4")) busy = true;
+  pthread_mutex_unlock(&lock);
+  return busy;
+}
+
+void downloads_prepare_restart(void) {
+  pthread_mutex_lock(&lock);
+  halted = 1;
+  for (int i = 0; i < njobs; i++) if (active_state(jobs[i]->state)) jobs[i]->stop = 3;
+  pthread_mutex_unlock(&lock);
+  /* Give the running download a few seconds to save where it got to. */
+  for (int t = 0; t < 100; t++) {
+    bool busy = false;
+    pthread_mutex_lock(&lock);
+    for (int i = 0; i < njobs; i++) if (active_state(jobs[i]->state)) busy = true;
+    if (!busy) save_locked();
+    pthread_mutex_unlock(&lock);
+    if (!busy) return;
+    usleep(100000);
+  }
+}
+
+void downloads_cancel_restart(void) {
+  pthread_mutex_lock(&lock);
+  halted = 0;
+  pthread_cond_signal(&wake);
+  pthread_mutex_unlock(&lock);
 }

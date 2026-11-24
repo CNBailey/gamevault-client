@@ -7,6 +7,8 @@
 
 /* Called once at start-up. */
 void platform_init(void);
+/* True when a drive is really mounted at this console path (not just an empty folder). */
+bool platform_is_mounted(const char *console_path);
 
 /* Directory for settings, the queue and resume data. */
 const char *platform_data_dir(void);

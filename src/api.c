@@ -14,10 +14,14 @@
 #include "json.h"
 #include "platform.h"
 #include "settings.h"
+#include "speedtest.h"
+#include "tile.h"
 
 #ifndef GV_VERSION
 #define GV_VERSION "dev"
 #endif
+
+int api_port(void);
 
 static bool is(const http_req_t *r, const char *method, const char *path) {
   return !strcmp(r->method, method) && !strcmp(r->path, path);
@@ -68,7 +72,9 @@ static void state(http_res_t *res) {
     jw_kv_int(&b, d[i].id, downloads_reserved(d[i].id), !first);
     first = false;
   }
-  sbuf_puts(&b, "},\"installed\":");
+  sbuf_puts(&b, "},\"tile\":");
+  tile_json(&b);
+  sbuf_puts(&b, ",\"installed\":");
   console_installed_json(&b);
   sbuf_puts(&b, ",\"downloads\":");
   downloads_json(&b);
@@ -150,6 +156,25 @@ static void api(const http_req_t *req, http_res_t *res) {
   }
   if (is(req, "POST", "/api/test-connection")) { test_connection(req, res); return; }
   if (is(req, "POST", "/api/rescan")) { console_rescan(); ok(res); return; }
+  if (is(req, "POST", "/api/open")) { tile_open_later(); ok(res); return; }
+  if (is(req, "POST", "/api/update-check")) { tile_check_now(); ok(res); return; }
+  if (is(req, "POST", "/api/update")) {
+    int rc = tile_update_now(err, sizeof err);   /* only returns when it failed */
+    if (rc == -2 && http_server_start(api_port(), api_handle)) log_msg("could not listen again after a failed update");
+    res_error(res, 409, err);
+    return;
+  }
+  if (is(req, "POST", "/api/speed-test")) {
+    jval_t *b = json_parse(req->body);
+    int64_t game_id = (int64_t)json_num(b, "gameId", 0);
+    json_free(b);
+    sbuf_t o;
+    sbuf_init(&o);
+    if (game_id <= 0) { sbuf_free(&o); res_error(res, 400, "gameId is required"); return; }
+    if (speedtest_run(game_id, &o, err, sizeof err)) { sbuf_free(&o); res_error(res, 409, err); return; }
+    res_json(res, 200, &o);
+    return;
+  }
   if (is(req, "POST", "/api/notify-test")) {
     platform_notify("GameVault", "Notifications are working");
     ok(res);
@@ -247,6 +272,10 @@ static void serve_static(const http_req_t *req, http_res_t *res) {
     : (!strcmp(a->path, "/index.html") ? "Cache-Control: no-cache\r\n" : "Cache-Control: max-age=86400\r\n");
   if (!strcmp(req->method, "HEAD")) res->body_len = 0;
 }
+
+static int port_in_use = 8687;
+void api_set_port(int port) { port_in_use = port; }
+int api_port(void) { return port_in_use; }
 
 void api_handle(const http_req_t *req, http_res_t *res) {
   if (!strncmp(req->path, "/api/", 5)) api(req, res);

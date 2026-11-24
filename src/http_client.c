@@ -38,8 +38,10 @@ static int connect_to(const url_t *u, char *err, size_t errlen) {
   struct timeval tv = { 30, 0 };
   setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof tv);
   setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof tv);
-  int rcvbuf = 4 << 20;
-  setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof rcvbuf);
+  /* Large receive buffers keep a fast link full; the PS5 caps them, so step down until one is accepted. */
+  for (int rcvbuf = 4 << 20; rcvbuf >= 256 << 10; rcvbuf /= 2) {
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof rcvbuf) == 0) break;
+  }
   int one = 1;
   setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);
   if (connect(fd, (struct sockaddr *)&addr, sizeof addr)) {

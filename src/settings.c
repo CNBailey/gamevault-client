@@ -14,7 +14,7 @@ static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static void defaults(settings_t *s) {
   memset(s, 0, sizeof *s);
   snprintf(s->ps5_drive, sizeof s->ps5_drive, "internal");
-  s->connections = 4;
+  s->connections = 0;
   s->play_limit_mbps = 0;
   s->notify = true;
   s->check_files = true;
@@ -51,7 +51,11 @@ const char *settings_apply_json(settings_t *s, const char *json) {
     else err = "Unknown drive";
   }
   jval_t *c = json_get(v, "connections");
-  if (c && c->type == J_NUM) s->connections = c->n < 1 ? 1 : c->n > 8 ? 8 : (int)c->n;
+  if (c && c->type == J_NUM) s->connections = c->n < 0 ? 0 : c->n > 8 ? 8 : (int)c->n;
+  jval_t *mc = json_get(v, "measuredConnections");
+  if (mc && mc->type == J_NUM) s->measured_connections = mc->n < 0 ? 0 : mc->n > 8 ? 8 : (int)mc->n;
+  jval_t *mm = json_get(v, "measuredMBps");
+  if (mm && mm->type == J_NUM) s->measured_mbps = mm->n < 0 ? 0 : (int)mm->n;
   jval_t *l = json_get(v, "playLimitMBps");
   if (l && l->type == J_NUM) s->play_limit_mbps = l->n < 0 ? 0 : l->n > 1000 ? 1000 : (int)l->n;
   jval_t *nt = json_get(v, "notify");
@@ -74,6 +78,8 @@ void settings_to_json(const settings_t *s, sbuf_t *out) {
   jw_kv_str(out, "server", s->server, false);
   jw_kv_str(out, "ps5Drive", s->ps5_drive, true);
   jw_kv_int(out, "connections", s->connections, true);
+  jw_kv_int(out, "measuredConnections", s->measured_connections, true);
+  jw_kv_int(out, "measuredMBps", s->measured_mbps, true);
   jw_kv_int(out, "playLimitMBps", s->play_limit_mbps, true);
   jw_kv_bool(out, "notify", s->notify, true);
   jw_kv_bool(out, "checkFiles", s->check_files, true);

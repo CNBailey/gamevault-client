@@ -13,6 +13,7 @@
 
 #include "json.h"
 #include "platform.h"
+#include "tile.h"
 
 #define MAX_INSTALLED 2048
 
@@ -43,7 +44,7 @@ static void fill_drive(drive_t *d, const char *id) {
   char real[600];
   platform_path(d->root, real, sizeof real);
   struct statvfs st;
-  if (statvfs(real, &st) == 0 && st.f_blocks > 0) {
+  if (platform_is_mounted(d->root) && statvfs(real, &st) == 0 && st.f_blocks > 0) {
     d->present = true;
     d->free_bytes = (int64_t)st.f_bavail * (int64_t)st.f_frsize;
     d->total_bytes = (int64_t)st.f_blocks * (int64_t)st.f_frsize;
@@ -210,6 +211,7 @@ static void scan_dir(installed_t *list, int *n, const char *console_dir, const c
         jval_t *j = json_parse(text);
         free(text);
         const char *tid = json_str(j, "titleId", NULL);
+        if (tid && !strcmp(tid, TILE_TITLE_ID)) tid = NULL;  /* our own home-screen tile */
         if (tid) {
           snprintf(it.kind, sizeof it.kind, "folder");
           snprintf(it.title_id, sizeof it.title_id, "%s", tid);

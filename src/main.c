@@ -13,6 +13,7 @@
 #include "http_server.h"
 #include "platform.h"
 #include "settings.h"
+#include "tile.h"
 
 #ifndef GV_VERSION
 #define GV_VERSION "dev"
@@ -39,7 +40,9 @@ int main(void) {
     platform_open_browser(url);
     return 0;
   }
+  api_set_port(port);
   downloads_init();
+  tile_init();
   log_msg("listening on port %d", port);
   platform_notify("GameVault", "Running. Open it from any browser on port 8687.");
   const char *no_browser = getenv("GV_NO_BROWSER");

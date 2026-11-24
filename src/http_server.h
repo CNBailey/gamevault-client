@@ -25,6 +25,8 @@ typedef void (*http_handler_t)(const http_req_t *req, http_res_t *res);
 
 /* Starts listening on port and serves forever on background threads. 0 on success. */
 int http_server_start(int port, http_handler_t handler);
+/* Stops accepting connections and frees the port (requests in progress finish). */
+void http_server_stop(void);
 
 /* Helpers for handlers. */
 void res_json(http_res_t *res, int status, sbuf_t *json);   /* takes ownership of json */

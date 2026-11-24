@@ -1,9 +1,15 @@
 /* PS5 implementation of platform.h (built with the ps5-payload-sdk). */
 #include "platform.h"
 
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/mount.h>
+#include <sys/param.h>
+
+#include <pthread.h>
 
 #include <ps5/kernel.h>
 
@@ -18,6 +24,11 @@ int sceUserServiceInitialize(void *);
 int sceSystemServiceLaunchWebBrowser(const char *uri, void *);
 int sceSystemServiceGetAppIdOfRunningBigApp(void);
 
+/*
+ * Layouts as used by ps5-web-file-manager (owendswang), which installs PKGs
+ * over HTTP successfully. The earlier PlayGoInfo here was far too small, so
+ * the installer wrote past it.
+ */
 typedef struct pkg_metadata {
   const char *uri;
   const char *ex_uri;
@@ -25,7 +36,10 @@ typedef struct pkg_metadata {
   const char *content_id;
   const char *content_name;
   const char *icon_url;
+  uint32_t slot;
+  uint32_t is_playgo_enabled;
 } pkg_metadata_t;
+_Static_assert(offsetof(pkg_metadata_t, slot) == 0x30 && sizeof(pkg_metadata_t) == 0x38, "metadata layout");
 
 typedef struct pkg_info {
   char content_id[48];
@@ -34,11 +48,12 @@ typedef struct pkg_info {
 } pkg_info_t;
 
 typedef struct playgo_info {
-  char lang[8][30];
-  char scenario_ids[3][64];
-  char content_ids[64];
+  char languages[30][8];
+  char scenario_ids[64][3];
+  char content_ids[64][48];
   long unknown[810];
 } playgo_info_t;
+_Static_assert(sizeof(playgo_info_t) == 0x2700, "PlayGoInfo layout");
 
 int sceAppInstUtilInitialize(void);
 int sceAppInstUtilInstallByPackage(const pkg_metadata_t *, pkg_info_t *, playgo_info_t *);
@@ -85,19 +100,34 @@ int platform_install_pkg(const char *url, const char *content_id, const char *na
     return -1;
   }
   appinst_ready = true;
-  playgo_info_t playgo;
+  static playgo_info_t playgo; /* 10 KB: keep it off the thread's stack */
+  static pthread_mutex_t mu = PTHREAD_MUTEX_INITIALIZER;
   pkg_info_t info;
-  memset(&playgo, 0, sizeof playgo);
   memset(&info, 0, sizeof info);
+  /* The installer fetches the icon itself; it only gets plain http:// ones. */
+  bool http_icon = icon_url && !strncmp(icon_url, "http://", 7);
   pkg_metadata_t meta = {
     .uri = url,
     .ex_uri = "",
     .playgo_scenario_id = "",
     .content_id = content_id ? content_id : "",
     .content_name = name ? name : "",
-    .icon_url = icon_url ? icon_url : ""
+    .icon_url = http_icon ? icon_url : "",
+    .slot = 0,
+    .is_playgo_enabled = 0
   };
+  pthread_mutex_lock(&mu);
+  memset(&playgo, 0, sizeof playgo);
   int rc = sceAppInstUtilInstallByPackage(&meta, &info, &playgo);
+  pthread_mutex_unlock(&mu);
   if (rc) snprintf(err, errlen, "The console's installer refused the package (error 0x%08x)", (unsigned)rc);
   return rc;
+}
+
+bool platform_is_mounted(const char *console_path) {
+  if (!strcmp(console_path, "/user") || !strcmp(console_path, "/data")) return true;
+  struct statfs st;
+  if (statfs(console_path, &st)) return false;
+  /* A drive that isn't connected leaves an empty folder on the system disk. */
+  return !strcmp(st.f_mntonname, console_path);
 }

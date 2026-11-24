@@ -196,12 +196,20 @@ done:
 typedef struct {
   int fd;
   http_handler_t handler;
+  volatile int stopped;
 } server_t;
+
+static server_t *running;
 
 static void *accept_thread(void *arg) {
   server_t *s = arg;
   for (;;) {
     int fd = accept(s->fd, NULL, NULL);
+    if (s->stopped) {
+      if (fd >= 0) close(fd);
+      free(s);
+      return NULL;
+    }
     if (fd < 0) {
       if (errno == EINTR) continue;
       usleep(100000);
@@ -238,7 +246,7 @@ int http_server_start(int port, http_handler_t handler) {
     close(fd);
     return -1;
   }
-  server_t *s = malloc(sizeof *s);
+  server_t *s = calloc(1, sizeof *s);
   s->fd = fd;
   s->handler = handler;
   pthread_t t;
@@ -248,5 +256,15 @@ int http_server_start(int port, http_handler_t handler) {
     return -1;
   }
   pthread_detach(t);
+  running = s;
   return 0;
+}
+
+void http_server_stop(void) {
+  server_t *s = running;
+  if (!s) return;
+  running = NULL;
+  s->stopped = 1;
+  shutdown(s->fd, SHUT_RDWR);
+  close(s->fd);
 }

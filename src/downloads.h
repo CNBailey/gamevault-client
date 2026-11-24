@@ -1,6 +1,7 @@
 /* Download queue: resumable multi-connection downloads and PS4 installs. */
 #pragma once
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "util.h"
 
@@ -25,3 +26,8 @@ void downloads_clear_finished(void);
 
 void downloads_json(sbuf_t *out);          /* JSON array of jobs */
 int64_t downloads_reserved(const char *drive); /* bytes still to be written to a drive by queued jobs */
+
+/* Before GameVault restarts itself: stop the current download so the new copy resumes it. */
+void downloads_prepare_restart(void);
+void downloads_cancel_restart(void);   /* the restart didn't happen */
+bool downloads_busy(void);             /* a PS5 download is running */

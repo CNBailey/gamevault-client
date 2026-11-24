@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Turns the built web interface (web/dist) into C source for the payload.
+"""Turns a folder into C source for the payload.
 
-usage: embed.py <dist-dir> <out.c>
-Text files are gzip-compressed; images are stored as they are.
+usage: embed.py <dir> <out.c> [--name NAME] [--raw]
+By default it embeds the web interface: text files are gzip-compressed and
+asset_find() looks them up. With --name, the table is exported as
+NAME_assets[] with NAME_asset_find(); --raw stores every file as it is.
 """
 import gzip
 import os
@@ -25,7 +27,17 @@ COMPRESS = {'.html', '.js', '.css', '.json', '.webmanifest', '.svg', '.txt'}
 
 
 def main():
-    dist, out = sys.argv[1], sys.argv[2]
+    args = sys.argv[1:]
+    raw = '--raw' in args
+    if raw:
+        args.remove('--raw')
+    name = None
+    if '--name' in args:
+        i = args.index('--name')
+        name = args[i + 1]
+        del args[i:i + 2]
+    dist, out = args[0], args[1]
+    prefix = f'{name}_' if name else ''
     files = []
     for root, _, names in os.walk(dist):
         for name in sorted(names):
@@ -38,20 +50,20 @@ def main():
     for i, (rel, full) in enumerate(files):
         ext = os.path.splitext(rel)[1].lower()
         data = open(full, 'rb').read()
-        gz = ext in COMPRESS
+        gz = ext in COMPRESS and not raw
         if gz:
             data = gzip.compress(data, 9, mtime=0)
         body = ','.join(str(b) for b in data)
-        lines.append(f'static const unsigned char a{i}[] = {{{body}}};')
+        lines.append(f'static const unsigned char {prefix}a{i}[] = {{{body}}};')
         mime = MIME.get(ext, 'application/octet-stream')
-        table.append(f'  {{"{rel}", "{mime}", a{i}, sizeof a{i}, {"true" if gz else "false"}}},')
-    lines.append('static const asset_t assets[] = {')
+        table.append(f'  {{"{rel}", "{mime}", {prefix}a{i}, sizeof {prefix}a{i}, {"true" if gz else "false"}}},')
+    lines.append(f'{"" if name else "static "}const asset_t {prefix}assets[] = {{')
     lines.extend(table)
     lines.append('  {0, 0, 0, 0, false}')
     lines.append('};')
     lines.append('')
-    lines.append('const asset_t *asset_find(const char *path) {')
-    lines.append('  for (const asset_t *a = assets; a->path; a++) if (!strcmp(a->path, path)) return a;')
+    lines.append(f'const asset_t *{prefix}asset_find(const char *path) {{')
+    lines.append(f'  for (const asset_t *a = {prefix}assets; a->path; a++) if (!strcmp(a->path, path)) return a;')
     lines.append('  return NULL;')
     lines.append('}')
     os.makedirs(os.path.dirname(out) or '.', exist_ok=True)
