@@ -1,6 +1,6 @@
 # Linux/macOS build of the GameVault PS5 service, for development and tests.
 # The console's file system is faked under $GV_ROOT (default ./gvroot).
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION ?= $(shell cat VERSION 2>/dev/null || echo dev)
 CC      ?= cc
 COMMON  := src/util.c src/json.c src/settings.c src/http_server.c src/http_client.c \
            src/console.c src/downloads.c src/api.c src/main.c

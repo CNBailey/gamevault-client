@@ -85,7 +85,7 @@ python3 tests/integration.py build/gamevault
 
 For the interface on its own, run `npm run dev` in `web/`. It sends `/api` to a GameVault payload on `127.0.0.1:8687`.
 
-GitHub Actions builds the interface, runs the end-to-end test against the Linux build, builds `gamevault.elf` with the latest SDK, and attaches it to a release when a `v*` tag is pushed.
+GitHub Actions builds the interface, runs the end-to-end test against the Linux build, builds `gamevault.elf` with the latest SDK, and publishes a release whenever the number in `VERSION` changes on `main` (or a `v*` tag is pushed). To release a new version, raise the number in `VERSION`.
 
 ## Licence
 

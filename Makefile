@@ -5,7 +5,7 @@
 
 PS5_HOST ?= ps5
 PS5_PORT ?= 9021
-VERSION  ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+VERSION  ?= $(shell cat VERSION 2>/dev/null || echo dev)
 
 ifdef PS5_PAYLOAD_SDK
     include $(PS5_PAYLOAD_SDK)/toolchain/prospero.mk
