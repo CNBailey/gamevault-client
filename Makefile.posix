@@ -1,0 +1,27 @@
+# Linux/macOS build of the GameVault PS5 service, for development and tests.
+# The console's file system is faked under $GV_ROOT (default ./gvroot).
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+CC      ?= cc
+COMMON  := src/util.c src/json.c src/settings.c src/http_server.c src/http_client.c \
+           src/console.c src/downloads.c src/api.c src/main.c
+SRCS    := $(COMMON) src/platform_posix.c build/assets.c
+CFLAGS  += -O1 -g -Wall -Wextra -Werror -Wno-unused-parameter -Wno-format-truncation -Isrc -DGV_VERSION='"$(VERSION)"'
+LDLIBS  += -lpthread
+
+all: build/gamevault
+
+build/assets.c: tools/embed.py $(shell find web/dist -type f 2>/dev/null)
+	@mkdir -p build
+	@if [ -f web/dist/index.html ]; then python3 tools/embed.py web/dist $@; \
+	 else mkdir -p build/empty && echo '<!doctype html><title>GameVault</title><p>Interface not built.' > build/empty/index.html && python3 tools/embed.py build/empty $@; fi
+
+build/gamevault: $(SRCS) $(wildcard src/*.h)
+	$(CC) $(CFLAGS) -o $@ $(SRCS) $(LDLIBS)
+
+asan: CFLAGS += -fsanitize=address,undefined -fno-omit-frame-pointer
+asan: build/gamevault
+
+clean:
+	rm -rf build
+
+.PHONY: all asan clean

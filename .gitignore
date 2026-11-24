@@ -1,0 +1,7 @@
+build/
+gamevault.elf
+gvroot/
+web/node_modules/
+web/dist/
+*.part
+*.part.state
