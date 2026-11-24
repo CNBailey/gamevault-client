@@ -33,17 +33,26 @@ jobs:
           make -f Makefile.posix asan
           python3 tests/integration.py build/gamevault
 
+      - name: Cache the UI kit and its SDKs
+        uses: actions/cache@v4
+        with:
+          path: .deps
+          key: uikit-${{ hashFiles('tools/build-app.sh') }}
+
       - name: Install the PS5 payload SDK
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang-18 lld-18
+          sudo apt-get install -y clang-18 lld-18 llvm-18 ninja-build libclang-rt-18-dev python3-pyelftools
           tag=$(gh release list -R ps5-payload-dev/sdk -L 1 --json tagName -q '.[0].tagName')
           echo "SDK release: $tag"
           gh release download "$tag" -R ps5-payload-dev/sdk -p ps5-payload-sdk.zip -D /tmp
           unzip -q /tmp/ps5-payload-sdk.zip -d /opt
           echo "PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk" >> "$GITHUB_ENV"
+
+      - name: Build the home-screen app
+        run: tools/build-app.sh app
 
       - name: Build gamevault.elf
         run: |

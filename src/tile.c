@@ -9,7 +9,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
-#include "assets.h"
+#include <zlib.h>
+#include <stdint.h>
 #include "downloads.h"
 #include "http_client.h"
 #include "http_server.h"
@@ -21,7 +22,6 @@
 #define GV_VERSION "dev"
 #endif
 
-extern const asset_t tile_assets[];
 
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static bool installed;
@@ -71,28 +71,136 @@ static void read_elf_version(void) {
   free(v);
 }
 
-/* Writes the tile's app folder (eboot.bin, sce_sys) where ShadowMountPlus finds it. */
+/*
+ * The home-screen app (a native PS5 app, app/ in the source) is linked into
+ * this payload as one zlib stream (tools/pack-app.py, src/app_blob.S). It is
+ * written to /data/homebrew/PPSA99687, where ShadowMountPlus puts it on the
+ * home screen, whenever it differs from what is there.
+ */
+extern const unsigned char gv_app_pack[];
+extern const unsigned char gv_app_pack_end[];
+
+#ifndef GV_APP_ID
+#define GV_APP_ID "none"
+#endif
+
+typedef struct {
+  z_stream z;
+  const unsigned char *in;
+  size_t in_left;
+  unsigned char out[1 << 16];
+  size_t have, pos;
+  int done, error;
+} inflater_t;
+
+/* Reads exactly n bytes of the uncompressed stream into dst (or skips them when dst is NULL). */
+static int pack_read(inflater_t *s, void *dst, size_t n) {
+  unsigned char *d = dst;
+  while (n) {
+    if (s->pos == s->have) {
+      if (s->done || s->error) return -1;
+      s->z.next_out = s->out;
+      s->z.avail_out = sizeof s->out;
+      if (!s->z.avail_in && s->in_left) {
+        size_t chunk = s->in_left > (1u << 20) ? (1u << 20) : s->in_left;
+        s->z.next_in = (unsigned char *)s->in;
+        s->z.avail_in = (unsigned)chunk;
+        s->in += chunk;
+        s->in_left -= chunk;
+      }
+      int rc = inflate(&s->z, Z_NO_FLUSH);
+      if (rc == Z_STREAM_END) s->done = 1;
+      else if (rc != Z_OK && rc != Z_BUF_ERROR) { s->error = 1; return -1; }
+      s->have = sizeof s->out - s->z.avail_out;
+      s->pos = 0;
+      if (!s->have && (s->done || (!s->z.avail_in && !s->in_left))) return -1;
+      continue;
+    }
+    size_t k = s->have - s->pos;
+    if (k > n) k = n;
+    if (d) { memcpy(d, s->out + s->pos, k); d += k; }
+    s->pos += k;
+    n -= k;
+  }
+  return 0;
+}
+
+static bool safe_rel(const char *p) {
+  if (!*p || *p == '/') return false;
+  for (const char *s = p; *s;) {
+    const char *e = strchr(s, '/');
+    size_t n = e ? (size_t)(e - s) : strlen(s);
+    if (n == 0 || (n == 2 && s[0] == '.' && s[1] == '.') || (n == 1 && s[0] == '.')) return false;
+    s = e ? e + 1 : s + n;
+  }
+  return true;
+}
+
+static int install_pack(void) {
+  inflater_t *s = calloc(1, sizeof *s);
+  if (!s) return -1;
+  s->in = gv_app_pack;
+  s->in_left = (size_t)(gv_app_pack_end - gv_app_pack);
+  if (inflateInit(&s->z) != Z_OK) { free(s); return -1; }
+  int files = 0, rc = 0;
+  char *buf = malloc(1 << 20);
+  for (;;) {
+    uint32_t len = 0;
+    if (pack_read(s, &len, 4)) { rc = -1; break; }
+    if (len == 0) break;
+    char rel[512];
+    uint64_t size = 0;
+    if (len >= sizeof rel || pack_read(s, rel, len)) { rc = -1; break; }
+    rel[len] = 0;
+    if (pack_read(s, &size, 8) || !safe_rel(rel)) { rc = -1; break; }
+    char path[900], tmp[920], dir[900];
+    real_path("/", path, sizeof path);
+    snprintf(path + strlen(path), sizeof path - strlen(path), "%s", rel);
+    snprintf(dir, sizeof dir, "%s", path);
+    char *slash = strrchr(dir, '/');
+    if (slash) { *slash = 0; mkdir_p(dir); }
+    snprintf(tmp, sizeof tmp, "%s.gvnew", path);
+    FILE *f = fopen(tmp, "wb");
+    if (!f) { rc = -1; break; }
+    uint64_t left = size;
+    while (left && rc == 0) {
+      size_t k = left > (1u << 20) ? (1u << 20) : (size_t)left;
+      if (pack_read(s, buf, k) || fwrite(buf, 1, k, f) != k) rc = -1;
+      left -= k;
+    }
+    if (fclose(f) || rc || rename(tmp, path)) { unlink(tmp); rc = -1; break; }
+    files++;
+  }
+  free(buf);
+  inflateEnd(&s->z);
+  free(s);
+  if (rc == 0) log_msg("home-screen app: wrote %d file(s) to %s", files, TILE_DIR);
+  return rc;
+}
+
 static void install_folder(void) {
-  char dir[700];
-  real_path("/sce_sys", dir, sizeof dir);
-  bool ok = mkdir_p(dir) == 0;
-  int written = 0;
-  for (const asset_t *a = tile_assets; ok && a->path; a++) {
-    char p[700];
-    real_path(a->path, p, sizeof p);
-    size_t len = 0;
-    char *have = read_file(p, &len);
-    bool same = have && len == a->len && !memcmp(have, a->data, len);
-    free(have);
-    if (same) continue;
-    if (write_file_atomic(p, (const char *)a->data, a->len)) ok = false;
-    else written++;
+  char marker[700], eboot[700], old_pic[700];
+  real_path("/.gv-app-id", marker, sizeof marker);
+  real_path("/eboot.bin", eboot, sizeof eboot);
+  char *have = read_file(marker, NULL);
+  bool current = have && !strncmp(have, GV_APP_ID, strlen(GV_APP_ID)) && file_exists(eboot);
+  free(have);
+  bool ok = true;
+  if (!current) {
+    char dir[700];
+    real_path("", dir, sizeof dir);
+    mkdir_p(dir);
+    ok = install_pack() == 0;
+    if (ok) {
+      write_file_atomic(marker, GV_APP_ID, strlen(GV_APP_ID));
+      real_path("/sce_sys/pic0.png", old_pic, sizeof old_pic);  /* left by the old tile */
+      unlink(old_pic);
+    }
   }
   pthread_mutex_lock(&lock);
   installed = ok;
-  snprintf(install_error, sizeof install_error, "%s", ok ? "" : "Could not write the tile's folder in /data/homebrew");
+  snprintf(install_error, sizeof install_error, "%s", ok ? "" : "Could not write the app's folder in /data/homebrew");
   pthread_mutex_unlock(&lock);
-  if (written) log_msg("home-screen tile: wrote %d file(s) to %s", written, TILE_DIR);
 }
 
 /* ---- newest version, from GameVault ------------------------------------------------ */

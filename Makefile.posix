@@ -4,8 +4,9 @@ VERSION ?= $(shell cat VERSION 2>/dev/null || echo dev)
 CC      ?= cc
 COMMON  := src/util.c src/json.c src/settings.c src/http_server.c src/http_client.c \
            src/console.c src/downloads.c src/speedtest.c src/tile.c src/api.c src/main.c
-SRCS    := $(COMMON) src/platform_posix.c build/assets.c build/tile_assets.c
-CFLAGS  += -O1 -g -Wall -Wextra -Werror -Wno-unused-parameter -Wno-format-truncation -Isrc -DGV_VERSION='"$(VERSION)"'
+ZLIB    := $(addprefix third_party/zlib/,adler32.c crc32.c inffast.c inflate.c inftrees.c zutil.c)
+SRCS    := $(COMMON) src/platform_posix.c build/assets.c
+CFLAGS  += -O1 -g -Wall -Wextra -Werror -Wno-unused-parameter -Wno-format-truncation -Isrc -Ithird_party/zlib -DGV_VERSION='"$(VERSION)"'
 LDLIBS  += -lpthread
 
 all: build/gamevault
@@ -15,20 +16,26 @@ build/assets.c: tools/embed.py $(shell find web/dist -type f 2>/dev/null)
 	@if [ -f web/dist/index.html ]; then python3 tools/embed.py web/dist $@; \
 	 else mkdir -p build/empty && echo '<!doctype html><title>GameVault</title><p>Interface not built.' > build/empty/index.html && python3 tools/embed.py build/empty $@; fi
 
-# The tile's eboot.bin needs the PS5 SDK; the Linux build embeds a stand-in.
-build/tile_assets.c: $(wildcard tile/sce_sys/*) tools/embed.py
-	rm -rf build/tile-files && mkdir -p build/tile-files/sce_sys
-	cp tile/sce_sys/* build/tile-files/sce_sys/
-	printf 'stand-in eboot for tests' > build/tile-files/eboot.bin
-	python3 tools/embed.py build/tile-files $@ --name tile --raw
+# The real app needs the PS5 toolchain; tests pack its sce_sys and a stand-in eboot.
+build/posix-app.pack: $(wildcard app/sce_sys/*) tools/pack-app.py
+	rm -rf build/posix-app && mkdir -p build/posix-app/sce_sys
+	cp app/sce_sys/* build/posix-app/sce_sys/
+	printf 'stand-in eboot for tests' > build/posix-app/eboot.bin
+	python3 tools/pack-app.py build/posix-app $@ build/posix-app.id
 
-build/gamevault: $(SRCS) $(wildcard src/*.h)
-	$(CC) $(CFLAGS) -o $@ $(SRCS) $(LDLIBS)
+build/posix-zlib.a: $(ZLIB)
+	@mkdir -p build/posix-zlib
+	cd build/posix-zlib && $(CC) -O2 -w $(addprefix ../../,$(ZLIB)) -c
+	ar rcs $@ build/posix-zlib/*.o
+
+build/gamevault: $(SRCS) $(wildcard src/*.h) src/app_blob.S build/posix-app.pack build/posix-zlib.a
+	$(CC) $(CFLAGS) -DGV_APP_ID='"$(shell cat build/posix-app.id 2>/dev/null)"' -DGV_APP_PACK='"build/posix-app.pack"' \
+	  -o $@ $(SRCS) src/app_blob.S build/posix-zlib.a $(LDLIBS)
 
 asan: CFLAGS += -fsanitize=address,undefined -fno-omit-frame-pointer
 asan: build/gamevault
 
 clean:
-	rm -rf build
+	rm -rf build/gamevault build/posix-*
 
 .PHONY: all asan clean

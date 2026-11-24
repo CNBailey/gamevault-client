@@ -14,17 +14,21 @@ The same interface also works from a phone or PC at `http://<PS5 address>:8687`.
 
 1. Download `gamevault.elf` from the [latest release](https://github.com/CNBailey/gamevault-client/releases/latest), or add it to your payload/package manager using that link. New versions are published there, so the manager can find updates.
 2. Load it with your ELF loader (port 9021), e.g. `socat -t 99999999 - TCP:<PS5 address>:9021 < gamevault.elf`, or from the package manager.
-3. A notification shows the address GameVault is on (`http://<PS5 address>:8687`); GameVault stays in the background. Open that address in the PS5 browser, a phone or a PC (or press the GameVault tile once it appears). In **Settings**, enter your GameVault server's address (e.g. `http://192.168.0.32:8686`), press **Test connection**, then **Save settings**.
+3. A notification shows the address GameVault is on (`http://<PS5 address>:8687`); GameVault stays in the background. Open the **GameVault** app on the home screen once it appears, or that address in a browser on a phone or PC. In **Settings**, enter your GameVault server's address (e.g. `http://192.168.0.32:8686`), press **Test connection**, then **Save settings**.
 
 GameVault keeps running until the PS5 is turned off or put in rest mode. Load it again to bring it back; queued downloads carry on. Loading it while it is already running just shows the address again.
 
-## Home-screen tile and updates
+## The home-screen app
 
-Once running, GameVault puts a small app in `/data/homebrew/PPSA99687` (an icon, a background and a tiny fake-signed `eboot.bin`). ShadowMountPlus adds it to the home screen as **GameVault** the next time it scans; load ShadowMountPlus again if it doesn't appear.
+GameVault puts a native PS5 app, **GameVault**, in `/data/homebrew/PPSA99687`, and ShadowMountPlus adds it to the home screen (load ShadowMountPlus again if it doesn't appear). It is drawn with OpenGL by the [ps5-homebrew-ui](https://github.com/J7mbo/ps5-homebrew-ui) kit, the way [NASBridge](https://github.com/J7mbo/nasbridge-ps5) does it, and has the same sections as the browser version: Library, the game page, Downloads, Storage and Settings (L1 / R1 switch sections; the server address is typed with an on-screen keyboard).
 
-Pressing the tile opens GameVault in the PS5 browser. If GameVault isn't running (after a restart, say), the tile starts it first and then opens it by sending the copy of `gamevault.elf` kept next to it to the ELF loader on port 9021 (or 9027), so it needs an ELF loader running, as after any jailbreak with ShadowMountPlus.
+The app is only a window: the downloads run in the background service (`gamevault.elf`), so they carry on when the app is closed. If the service isn't running when you open the app, the app starts it by sending the copy of `gamevault.elf` kept in its folder to the ELF loader on port 9021 (or 9027).
 
-That copy comes from your GameVault server, which fetches the newest release from GitHub every 6 hours (server 2026-11-24 or newer). When a newer version is ready, Settings and the top bar show **Update to x.y.z**: GameVault restarts as the new version, and a download in progress carries on.
+That copy comes from your GameVault server, which fetches the newest release from GitHub every 6 hours. When a newer version is ready, Settings shows **Update GameVault** (and the browser version an **Update to x.y.z** button): GameVault restarts as the new version, a download in progress carries on, and the home-screen app is replaced with the new one.
+
+If you had the 0.2 tile on the home screen and it shows an error, delete the tile from the home screen (Options › Delete) and load ShadowMountPlus again, so it adds the new app.
+
+The app's source is in `app/`; `tools/build-app.sh app` builds it (and `tools/build-app.sh snapshots` renders its screens on a PC, with GameVault running on port 8687).
 
 ## Where games go
 
@@ -74,7 +78,7 @@ The payload serves a small JSON API on port 8687, used by the interface:
 | `DELETE /api/installed?path=` | Deletes a game found on the console (PS5 games only) |
 | `POST /api/speed-test` | `{gameId}` → MB/s with 1, 2, 4 and 6 connections |
 | `GET /api/log` | Recent log lines (also in Settings › Diagnostics) |
-| `POST /api/open` | Opens the interface in the PS5 browser (used by the tile) |
+| `POST /api/open` | Opens the browser version in the PS5 browser |
 | `POST /api/update-check`, `/api/update` | Checks for, or restarts as, a newer version |
 | `POST /api/rescan`, `/api/notify-test`, `/api/quit` | |
 
@@ -84,7 +88,10 @@ The payload serves a small JSON API on port 8687, used by the interface:
 # Interface
 cd web && npm ci && npm run build && cd ..
 
-# PS5 payload (needs the ps5-payload-sdk, clang-18 and lld-18)
+# Home-screen app (clang-18, lld-18, ninja; fetches the UI kit and its SDKs)
+tools/build-app.sh app     # build/app/PPSA99687
+
+# PS5 payload, with the app inside (needs the ps5-payload-sdk)
 export PS5_PAYLOAD_SDK=/opt/ps5-payload-sdk
 make                       # gamevault.elf
 make send PS5_HOST=192.168.0.50
@@ -101,4 +108,4 @@ GitHub Actions builds the interface, runs the end-to-end test against the Linux 
 
 ## Licence
 
-GPL-3.0-or-later. Built with the [ps5-payload-dev SDK](https://github.com/ps5-payload-dev/sdk).
+GPL-3.0-or-later. Built with the [ps5-payload-dev SDK](https://github.com/ps5-payload-dev/sdk) and the [ps5-homebrew-ui](https://github.com/J7mbo/ps5-homebrew-ui) kit (GPL-3.0-or-later, by BlackBearReloaded); the app's shell change comes from [NASBridge](https://github.com/J7mbo/nasbridge-ps5) (GPL-3.0-or-later). stb_image (public domain / MIT) and zlib (zlib licence) are included in `app/third_party` and `third_party`.
