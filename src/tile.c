@@ -223,12 +223,21 @@ void tile_json(sbuf_t *out) {
 
 static void *open_thread(void *arg) {
   (void)arg;
-  usleep(1500000); /* let the tile app close first */
-  platform_open_browser("http://127.0.0.1:8687/?tv=1");
+  /* Let the tile app close first: wait (up to 6 s) until no app is in front, then a moment more. */
+  for (int i = 0; i < 30 && platform_game_running(); i++) usleep(200000);
+  usleep(700000);
+  int rc = platform_open_browser("http://127.0.0.1:8687/?tv=1");
+  log_msg("tile: opened the browser (result 0x%08x)", (unsigned)rc);
+  if (rc) {
+    sleep(2);
+    rc = platform_open_browser("http://127.0.0.1:8687/?tv=1");
+    log_msg("tile: opened the browser again (result 0x%08x)", (unsigned)rc);
+  }
   return NULL;
 }
 
 void tile_open_later(void) {
+  log_msg("tile: asked to open the interface");
   pthread_t t;
   if (pthread_create(&t, NULL, open_thread, NULL) == 0) pthread_detach(t);
 }

@@ -1,3 +1,5 @@
+#include <pthread.h>
+#include <time.h>
 #include "util.h"
 
 #include <dirent.h>
@@ -169,6 +171,12 @@ void iso_time(char out[32], int64_t ms) {
   strftime(out, 32, "%Y-%m-%dT%H:%M:%SZ", &tm);
 }
 
+/* The last log lines, shown in Settings › Diagnostics. */
+#define LOG_LINES 200
+static char log_ring[LOG_LINES][300];
+static int log_next, log_count;
+static pthread_mutex_t log_lock = PTHREAD_MUTEX_INITIALIZER;
+
 void log_msg(const char *fmt, ...) {
   char line[1024];
   va_list ap;
@@ -176,6 +184,20 @@ void log_msg(const char *fmt, ...) {
   vsnprintf(line, sizeof line, fmt, ap);
   va_end(ap);
   fprintf(stderr, "[gamevault] %s\n", line);
+  char stamp[32];
+  time_t t = time(NULL);
+  strftime(stamp, sizeof stamp, "%H:%M:%S", localtime(&t));
+  pthread_mutex_lock(&log_lock);
+  snprintf(log_ring[log_next], sizeof log_ring[0], "%s %s", stamp, line);
+  log_next = (log_next + 1) % LOG_LINES;
+  if (log_count < LOG_LINES) log_count++;
+  pthread_mutex_unlock(&log_lock);
+}
+
+void log_lines(void (*each)(const char *line, void *ctx), void *ctx) {
+  pthread_mutex_lock(&log_lock);
+  for (int i = 0; i < log_count; i++) each(log_ring[(log_next - log_count + i + LOG_LINES) % LOG_LINES], ctx);
+  pthread_mutex_unlock(&log_lock);
 }
 
 bool safe_name(const char *name) {

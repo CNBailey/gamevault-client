@@ -122,6 +122,12 @@ static void test_connection(const http_req_t *req, http_res_t *res) {
   res_json(res, 200, &b);
 }
 
+static void log_line(const char *line, void *ctx) {
+  sbuf_t *b = ctx;
+  if (b->len > 1) sbuf_puts(b, ",");
+  jw_str(b, line);
+}
+
 static void *quit_later(void *arg) {
   (void)arg;
   usleep(300000);
@@ -156,6 +162,15 @@ static void api(const http_req_t *req, http_res_t *res) {
   }
   if (is(req, "POST", "/api/test-connection")) { test_connection(req, res); return; }
   if (is(req, "POST", "/api/rescan")) { console_rescan(); ok(res); return; }
+  if (is(req, "GET", "/api/log")) {
+    sbuf_t b;
+    sbuf_init(&b);
+    sbuf_puts(&b, "[");
+    log_lines(log_line, &b);
+    sbuf_puts(&b, "]");
+    res_json(res, 200, &b);
+    return;
+  }
   if (is(req, "POST", "/api/open")) { tile_open_later(); ok(res); return; }
   if (is(req, "POST", "/api/update-check")) { tile_check_now(); ok(res); return; }
   if (is(req, "POST", "/api/update")) {

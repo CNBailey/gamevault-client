@@ -37,6 +37,8 @@ int rm_rf(const char *path);
 
 int64_t now_ms(void);
 void iso_time(char out[32], int64_t ms);
+/* Calls each() with the recent log lines, oldest first. */
+void log_lines(void (*each)(const char *line, void *ctx), void *ctx);
 void log_msg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
 /* Safe path component check (no "/", "..", NUL, leading dot). */

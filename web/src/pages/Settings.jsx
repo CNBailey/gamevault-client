@@ -128,6 +128,18 @@ function SpeedTest({ state, games, notify, onDone }) {
   );
 }
 
+function Diagnostics() {
+  const [lines, setLines] = useState(null);
+  const load = () => ps5.log().then(setLines, (e) => setLines([`Couldn't read the log: ${e.message}`]));
+  return (
+    <section class="panel stack">
+      <h2>Diagnostics</h2>
+      <div class="row gap"><button class="btn" onClick={load}>{lines ? 'Refresh log' : 'Show log'}</button></div>
+      {lines && <pre class="log">{lines.length ? lines.join('\n') : 'Nothing logged yet.'}</pre>}
+    </section>
+  );
+}
+
 export function Settings({ state, refresh, notify, loadGames, onKeys, games }) {
   const [form, setForm] = useState(state.settings);
   const [test, setTest] = useState(null);
@@ -240,6 +252,7 @@ export function Settings({ state, refresh, notify, loadGames, onKeys, games }) {
         </div>
         <p class="muted small">GameVault {state.version} · PS5 firmware {state.firmware || 'unknown'} · open this page from a phone or PC at <code>http://&lt;PS5 address&gt;:8687</code></p>
       </section>
+      <Diagnostics />
       <Hints items={[['✕', 'Select'], ['L1 / R1', 'Switch section']]} />
     </div>
   );

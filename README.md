@@ -14,15 +14,15 @@ The same interface also works from a phone or PC at `http://<PS5 address>:8687`.
 
 1. Download `gamevault.elf` from the [latest release](https://github.com/CNBailey/gamevault-client/releases/latest), or add it to your payload/package manager using that link. New versions are published there, so the manager can find updates.
 2. Load it with your ELF loader (port 9021), e.g. `socat -t 99999999 - TCP:<PS5 address>:9021 < gamevault.elf`, or from the package manager.
-3. The PS5's browser opens on GameVault. Open **Settings**, enter your GameVault server's address (e.g. `http://192.168.0.32:8686`), press **Test connection**, then **Save settings**.
+3. A notification shows the address GameVault is on (`http://<PS5 address>:8687`); GameVault stays in the background. Open that address in the PS5 browser, a phone or a PC (or press the GameVault tile once it appears). In **Settings**, enter your GameVault server's address (e.g. `http://192.168.0.32:8686`), press **Test connection**, then **Save settings**.
 
-GameVault keeps running until the PS5 is turned off or put in rest mode. Load it again to bring it back; queued downloads carry on. Loading it while it is already running just opens the interface again.
+GameVault keeps running until the PS5 is turned off or put in rest mode. Load it again to bring it back; queued downloads carry on. Loading it while it is already running just shows the address again.
 
 ## Home-screen tile and updates
 
 Once running, GameVault puts a small app in `/data/homebrew/PPSA99687` (an icon, a background and a tiny fake-signed `eboot.bin`). ShadowMountPlus adds it to the home screen as **GameVault** the next time it scans; load ShadowMountPlus again if it doesn't appear.
 
-Pressing the tile opens GameVault in the PS5 browser. If GameVault isn't running (after a restart, say), the tile starts it first by sending the copy of `gamevault.elf` kept next to it to the ELF loader on port 9021 (or 9027), so it needs an ELF loader running, as after any jailbreak with ShadowMountPlus.
+Pressing the tile opens GameVault in the PS5 browser. If GameVault isn't running (after a restart, say), the tile starts it first and then opens it by sending the copy of `gamevault.elf` kept next to it to the ELF loader on port 9021 (or 9027), so it needs an ELF loader running, as after any jailbreak with ShadowMountPlus.
 
 That copy comes from your GameVault server, which fetches the newest release from GitHub every 6 hours (server 2026-11-24 or newer). When a newer version is ready, Settings and the top bar show **Update to x.y.z**: GameVault restarts as the new version, and a download in progress carries on.
 
@@ -73,6 +73,7 @@ The payload serves a small JSON API on port 8687, used by the interface:
 | `POST /api/downloads/clear` | Removes finished downloads from the list |
 | `DELETE /api/installed?path=` | Deletes a game found on the console (PS5 games only) |
 | `POST /api/speed-test` | `{gameId}` → MB/s with 1, 2, 4 and 6 connections |
+| `GET /api/log` | Recent log lines (also in Settings › Diagnostics) |
 | `POST /api/open` | Opens the interface in the PS5 browser (used by the tile) |
 | `POST /api/update-check`, `/api/update` | Checks for, or restarts as, a newer version |
 | `POST /api/rescan`, `/api/notify-test`, `/api/quit` | |

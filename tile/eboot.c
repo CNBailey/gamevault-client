@@ -17,6 +17,7 @@
 #define SYS_close   6
 #define SYS_socket  97
 #define SYS_connect 98
+#define SYS_nanosleep 240
 #define SYS_klog    0x259
 
 typedef unsigned long size_t;
@@ -112,6 +113,12 @@ ask_service(void) {
   return rc;
 }
 
+static void
+sleep_ms(long ms) {
+  struct { long sec, nsec; } ts = { ms / 1000, (ms % 1000) * 1000000 };
+  __syscall(SYS_nanosleep, &ts, 0);
+}
+
 /* In .data: the linker script has no .bss. */
 static char elf_buf[16 * 1024] __attribute__((section(".data")));
 
@@ -155,6 +162,11 @@ main(void) {
   if (ask_service() == 0) return 0;
   if (start_service() == 0) {
     klog("GameVault tile: started the service\n");
+    /* The service stays in the background on its own; ask it to open once it answers. */
+    for (int i = 0; i < 40; i++) {
+      sleep_ms(250);
+      if (ask_service() == 0) return 0;
+    }
     return 0;
   }
   return 1;
