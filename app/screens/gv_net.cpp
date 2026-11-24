@@ -10,7 +10,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
-#include <netdb.h>
+#include <map>
+#include <mutex>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <sys/socket.h>
@@ -49,6 +50,33 @@ bool parse_url(const std::string &url, Url *out)
     return !out->host.empty() && out->port > 0 && out->port < 65536;
 }
 
+// Asks the GameVault service (http://127.0.0.1:8687/api/resolve) for a
+// name's IPv4 address. Answers are kept, since the NAS rarely moves.
+std::string resolve_via_service(const std::string &host)
+{
+    static std::mutex lock;
+    static std::map<std::string, std::string> known;
+    {
+        std::lock_guard<std::mutex> hold(lock);
+        auto it = known.find(host);
+        if (it != known.end())
+            return it->second;
+    }
+    HttpResult r = http("GET", "http://127.0.0.1:8687/api/resolve?host=" + url_encode(host), {}, 8);
+    if (r.status != 200)
+        return {};
+    const std::size_t at = r.body.find("\"ip\":\"");
+    if (at == std::string::npos)
+        return {};
+    const std::size_t from = at + 6, to = r.body.find('"', from);
+    if (to == std::string::npos)
+        return {};
+    std::string ip = r.body.substr(from, to - from);
+    std::lock_guard<std::mutex> hold(lock);
+    known[host] = ip;
+    return ip;
+}
+
 int connect_to(const Url &u, int timeout_seconds, std::string *error)
 {
     sockaddr_in addr{};
@@ -56,17 +84,15 @@ int connect_to(const Url &u, int timeout_seconds, std::string *error)
     addr.sin_port = htons(static_cast<std::uint16_t>(u.port));
     if (inet_pton(AF_INET, u.host.c_str(), &addr.sin_addr) != 1)
     {
-        addrinfo hints{};
-        hints.ai_family = AF_INET;
-        hints.ai_socktype = SOCK_STREAM;
-        addrinfo *found = nullptr;
-        if (getaddrinfo(u.host.c_str(), nullptr, &hints, &found) != 0 || !found)
+        // A name, not an address. getaddrinfo lives in a WebKit library that
+        // a game can't load (the app wouldn't start at all), so the
+        // background service on 127.0.0.1 looks the name up for us.
+        std::string ip = resolve_via_service(u.host);
+        if (ip.empty() || inet_pton(AF_INET, ip.c_str(), &addr.sin_addr) != 1)
         {
             *error = "Can't find \"" + u.host + "\": use the NAS's IP address";
             return -1;
         }
-        addr.sin_addr = reinterpret_cast<sockaddr_in *>(found->ai_addr)->sin_addr;
-        freeaddrinfo(found);
     }
     const int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0)

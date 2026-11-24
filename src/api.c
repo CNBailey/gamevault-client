@@ -1,7 +1,11 @@
 /* REST API for the interface (TV browser, phone or PC) plus the static UI. */
 #include "api.h"
 
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <netinet/in.h>
 #include <pthread.h>
+#include <sys/socket.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -194,6 +198,30 @@ static void api(const http_req_t *req, http_res_t *res) {
     res->owned = text;
     res->body = text;
     res->body_len = keep;
+    return;
+  }
+  if (is(req, "GET", "/api/resolve")) {
+    /* The home-screen app can't look names up itself (getaddrinfo is in a
+       WebKit library a game can't load), so it asks the service. */
+    char host[256] = { 0 }, ip[INET_ADDRSTRLEN] = { 0 };
+    if (!query_param(req->query, "host", host, sizeof host)) { res_error(res, 400, "host is required"); return; }
+    struct in_addr a;
+    if (inet_pton(AF_INET, host, &a) != 1) {
+      struct addrinfo hints, *found = NULL;
+      memset(&hints, 0, sizeof hints);
+      hints.ai_family = AF_INET;
+      hints.ai_socktype = SOCK_STREAM;
+      if (getaddrinfo(host, NULL, &hints, &found) || !found) { res_error(res, 404, "not found"); return; }
+      a = ((struct sockaddr_in *)found->ai_addr)->sin_addr;
+      freeaddrinfo(found);
+    }
+    inet_ntop(AF_INET, &a, ip, sizeof ip);
+    sbuf_t b;
+    sbuf_init(&b);
+    sbuf_puts(&b, "{\"ip\":\"");
+    sbuf_puts(&b, ip);
+    sbuf_puts(&b, "\"}");
+    res_json(res, 200, &b);
     return;
   }
   if (is(req, "POST", "/api/open")) { tile_open_later(); ok(res); return; }

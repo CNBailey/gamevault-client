@@ -81,6 +81,13 @@ app)
         echo "app build failed (log: $WORK/build.log)" >&2
         exit 1
     fi
+    # The app must only need the libraries a game can load. The kit's demo
+    # needs exactly these; anything else (libScePosixForWebKit, which holds
+    # getaddrinfo, for one) stops the app before its first line runs.
+    allowed="libSceAgc.prx libSceAgcDriver.prx libSceAudioOut.prx libSceLibcInternal.prx libScePad.prx libSceSystemService.prx libSceUserService.prx libSceVideoOut.prx libkernel.prx"
+    for lib in $(readelf -d "$WORK/build/eboot.elf" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p'); do
+        case " $allowed " in *" $lib "*) ;; *) echo "eboot needs $lib, which a game can't load" >&2; exit 1 ;; esac
+    done
     rm -rf "$root/build/app" && mkdir -p "$root/build/app"
     cp -a "$WORK/dist/PPSA99688" "$root/build/app/PPSA99688"
     du -sh "$root/build/app/PPSA99688"

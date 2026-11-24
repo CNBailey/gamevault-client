@@ -319,6 +319,10 @@ try:
     check('tile not listed as a game', all(i['titleId'] != 'PPSA99688' for i in state['installed']) and state['tile']['installed'])
     s, _ = call('POST', '/api/open', {})
     check('open request accepted', s == 200)
+    s, r = call('GET', '/api/resolve?host=localhost')
+    check('resolve a name for the app', s == 200 and r['ip'] == '127.0.0.1', r)
+    s, r = call('GET', '/api/resolve?host=192.168.0.9')
+    check('resolve an address as itself', s == 200 and r['ip'] == '192.168.0.9', r)
 
     # Speed test (network only).
     s, r = call('POST', '/api/speed-test', {'gameId': 1}, timeout=60)
