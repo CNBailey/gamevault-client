@@ -173,3 +173,5 @@ button.fact:not(:disabled) { cursor: pointer; }
 .hints { display: flex; gap: 30px; flex-wrap: wrap; padding-top: 18px; color: var(--text-2); }
 .toast { position: fixed; left: 50%; bottom: 36px; transform: translateX(-50%); padding: 14px 22px; border-radius: 14px; background: #1C232D; border: 1px solid var(--line-2); box-shadow: 0 12px 40px rgba(0,0,0,0.5); font-weight: 600; z-index: 10; max-width: 90vw; }
 .toast.error { border-color: #7A3434; color: #FFB4B4; }
+.speed { display: flex; flex-direction: column; gap: 6px; max-width: 520px; }
+.update-pill { padding: 6px 14px; border-radius: 20px; background: var(--accent); color: var(--bg); font-weight: 700; text-decoration: none; }

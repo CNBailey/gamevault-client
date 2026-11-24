@@ -167,12 +167,12 @@ def stop():
     proc.wait(5)
 
 
-def call(method, path, body=None):
+def call(method, path, body=None, timeout=10):
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(f'http://127.0.0.1:{port}{path}', data=data, method=method,
                                  headers={'Content-Type': 'application/json'} if data else {})
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return r.status, json.loads(r.read() or b'null')
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read() or b'null')
@@ -291,6 +291,32 @@ try:
     # Missing drive.
     s, r = call('POST', '/api/downloads', {'gameId': 1, 'drive': 'usb3'})
     check('missing drive refused', s == 409)
+
+    # Drives: an empty /mnt/usb0 folder is not a connected drive.
+    os.makedirs(os.path.join(ROOT, 'mnt/usb0'), exist_ok=True)
+    state = call('GET', '/api/state')[1]
+    check('unplugged USB folder not shown', [d['id'] for d in state['drives']] == ['internal'])
+    open(os.path.join(ROOT, 'mnt/usb0/.mounted'), 'w').close()
+    state = call('GET', '/api/state')[1]
+    check('connected USB drive shown', 'usb0' in [d['id'] for d in state['drives']])
+
+    # Home-screen tile folder, kept out of the games list.
+    tile = os.path.join(ROOT, 'data/homebrew/PPSA99687')
+    for _ in range(50):
+        if os.path.exists(os.path.join(tile, 'sce_sys/param.json')):
+            break
+        time.sleep(0.1)
+    check('tile folder written', all(os.path.exists(os.path.join(tile, f)) for f in ('eboot.bin', 'sce_sys/param.json', 'sce_sys/icon0.png')))
+    call('POST', '/api/rescan', {})
+    state = call('GET', '/api/state')[1]
+    check('tile not listed as a game', all(i['titleId'] != 'PPSA99687' for i in state['installed']) and state['tile']['installed'])
+    s, _ = call('POST', '/api/open', {})
+    check('open request accepted', s == 200)
+
+    # Speed test (network only).
+    s, r = call('POST', '/api/speed-test', {'gameId': 1}, timeout=60)
+    check('speed test', s == 200 and r['best'] in (1, 2, 4, 6) and len(r['results']) == 4, r)
+    check('speed test remembered', call('GET', '/api/settings')[1]['measuredConnections'] == r['best'])
 
     # Static interface.
     with urllib.request.urlopen(f'http://127.0.0.1:{port}/') as r:

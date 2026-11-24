@@ -66,10 +66,10 @@ int speedtest_run(int64_t game_id, sbuf_t *out, char *err, size_t errlen) {
     int64_t n = (int64_t)json_num(f, "size", 0);
     if (n > size) { size = n; path = json_str(f, "path", NULL); }
   }
-  if (!path || size < (256LL << 20)) {
+  if (!path || size < (64LL << 20)) {
     json_free(files);
     pthread_mutex_unlock(&running);
-    if (!rc) snprintf(err, errlen, "Pick a game of at least 256 MB for the speed test");
+    if (!rc) snprintf(err, errlen, "Pick a game of at least 64 MB for the speed test");
     return -1;
   }
   sbuf_t u;

@@ -104,6 +104,9 @@ function App() {
           ))}
           {TV && <span class="key-hint">R1</span>}
         </nav>
+        {state && state.tile && state.tile.updateReady && route.page !== 'settings' && (
+          <a class="update-pill" href="#/settings">Update to {state.tile.elfVersion}</a>
+        )}
         <div class="conn">
           <span class={`dot ${stateError ? 'bad' : !server ? 'warn' : gamesError ? 'bad' : 'good'}`} />
           {stateError ? 'PS5 service not answering'

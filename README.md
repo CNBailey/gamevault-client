@@ -18,12 +18,20 @@ The same interface also works from a phone or PC at `http://<PS5 address>:8687`.
 
 GameVault keeps running until the PS5 is turned off or put in rest mode. Load it again to bring it back; queued downloads carry on. Loading it while it is already running just opens the interface again.
 
+## Home-screen tile and updates
+
+Once running, GameVault puts a small app in `/data/homebrew/PPSA99687` (an icon, a background and a tiny fake-signed `eboot.bin`). ShadowMountPlus adds it to the home screen as **GameVault** the next time it scans; load ShadowMountPlus again if it doesn't appear.
+
+Pressing the tile opens GameVault in the PS5 browser. If GameVault isn't running (after a restart, say), the tile starts it first by sending the copy of `gamevault.elf` kept next to it to the ELF loader on port 9021 (or 9027), so it needs an ELF loader running, as after any jailbreak with ShadowMountPlus.
+
+That copy comes from your GameVault server, which fetches the newest release from GitHub every 6 hours (server 2026-11-24 or newer). When a newer version is ready, Settings and the top bar show **Update to x.y.z**: GameVault restarts as the new version, and a download in progress carries on.
+
 ## Where games go
 
 | | Saved to | Used by |
 |---|---|---|
 | PS5 games (`.exfat` images and folder dumps) | `/data/homebrew` on the internal SSD, or `/mnt/usbN/homebrew` / `/mnt/extN/homebrew` on an external drive | ShadowMountPlus |
-| PS4 games (`.pkg`) | The PS5's installer, which uses the console's own *Settings › Storage › Installation location* | The PS5 |
+| PS4 games (`.pkg`) | The PS5's installer, which fetches the PKG from GameVault itself and uses the console's own *Settings › Storage › Installation location* | The PS5 |
 
 Choose the drive for PS5 games in Settings, or for a single game with □ on its page. To install PS4 games to an external drive, change the console's installation location. PS4 games can only be installed from `.pkg` files.
 
@@ -33,9 +41,9 @@ When an update is downloaded, the older copy is deleted once the new one is comp
 
 ## Transfers
 
-Downloads come over HTTP from GameVault, using 4 connections by default (Settings › Connections per download). NFS isn't supported yet, so the *Automatic* and *NFS* transfer settings use HTTP for now. Your NFS share is saved for when NFS support is added.
+Downloads come over HTTP from GameVault. **Settings › Test download speed** reads part of your largest PS5 game with 1, 2, 4 and 6 connections (nothing is written) and keeps the fewest that reach the top speed; *Connections per download: Automatic* (the default) then uses that number, or 2 before the first test. Each connection writes to the drive in 8 MB blocks. NFS isn't supported yet, so the *Automatic* and *NFS* transfer settings use HTTP for now. Your NFS share is saved for when NFS support is added.
 
-Each download is written in 32 MB pieces. A `.part` file and a `.part.state` file next to it record which pieces are done, so a paused or interrupted download carries on where it stopped. With *Check each image* on (the default), a finished `.exfat` is checked for the right size and an exFAT header before it is renamed into place.
+Each download is fetched in 64 MB pieces. A `.part` file and a `.part.state` file next to it record which pieces are done, so a paused or interrupted download carries on where it stopped. With *Check each image* on (the default), a finished `.exfat` is checked for the right size and an exFAT header before it is renamed into place.
 
 ## Controller
 
@@ -64,6 +72,9 @@ The payload serves a small JSON API on port 8687, used by the interface:
 | `DELETE /api/downloads/:id` | Removes a finished, failed or cancelled download from the list |
 | `POST /api/downloads/clear` | Removes finished downloads from the list |
 | `DELETE /api/installed?path=` | Deletes a game found on the console (PS5 games only) |
+| `POST /api/speed-test` | `{gameId}` → MB/s with 1, 2, 4 and 6 connections |
+| `POST /api/open` | Opens the interface in the PS5 browser (used by the tile) |
+| `POST /api/update-check`, `/api/update` | Checks for, or restarts as, a newer version |
 | `POST /api/rescan`, `/api/notify-test`, `/api/quit` | |
 
 ## Building

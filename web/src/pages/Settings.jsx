@@ -51,7 +51,84 @@ function KeyTest({ onClose }) {
   );
 }
 
-export function Settings({ state, refresh, notify, loadGames, onKeys }) {
+function HomeScreen({ state, notify }) {
+  const t = state.tile || {};
+  const [busy, setBusy] = useState(false);
+  const update = async () => {
+    setBusy(true);
+    try {
+      const r = await ps5.update();
+      notify(r && r.restarting ? `Restarting as GameVault ${t.elfVersion}…` : 'Updated');
+      // The page reloads once the new version answers.
+      const started = Date.now();
+      const poll = setInterval(async () => {
+        try {
+          const s = await ps5.state();
+          if (s.version !== state.version || Date.now() - started > 30000) { clearInterval(poll); location.reload(); }
+        } catch (e) { /* still restarting */ }
+      }, 1500);
+    } catch (e) { notify(e.message, 'error'); setBusy(false); }
+  };
+  return (
+    <section class="panel stack">
+      <h2>Home screen and updates</h2>
+      {t.installed ? (
+        <p>GameVault has put its tile in <code>{t.path}</code>. ShadowMountPlus adds it to the home screen the next time it scans (load ShadowMountPlus again if it doesn't appear). Pressing the tile opens GameVault{t.elfVersion ? ', and starts it first if it isn’t running' : ''}.</p>
+      ) : (
+        <p class="bad-text">{t.error || 'The tile has not been set up yet.'}</p>
+      )}
+      {!t.elfVersion && (
+        <p class="muted small">To let the tile start GameVault after a restart, the PS5 needs a copy of GameVault from your GameVault server. {t.checkError ? `Not yet: ${t.checkError}.` : 'Getting it…'}</p>
+      )}
+      <div class="row gap wrap">
+        <span>This PS5: GameVault {state.version}{t.latestVersion ? ` · newest: ${t.latestVersion}` : ''}</span>
+        {t.updateReady ? (
+          <button class="btn btn-primary" disabled={busy} onClick={update}>{busy ? 'Restarting…' : `Update to ${t.elfVersion}`}</button>
+        ) : t.updateAvailable ? (
+          <span class="muted">Downloading {t.latestVersion}…</span>
+        ) : (
+          <button class="btn" onClick={() => ps5.updateCheck().then(() => notify('Checking GameVault for a newer version'))}>Check for updates</button>
+        )}
+      </div>
+      {t.updateReady && <p class="muted small">Updating restarts GameVault; a download in progress pauses for a moment and carries on.</p>}
+    </section>
+  );
+}
+
+function SpeedTest({ state, games, notify, onDone }) {
+  const [result, setResult] = useState(null);
+  const [running, setRunning] = useState(false);
+  const candidates = (games || []).filter((g) => g.platform === 'PS5' && g.sizeBytes >= 64 * 1024 * 1024).sort((a, b) => b.sizeBytes - a.sizeBytes);
+  const run = async () => {
+    if (!candidates.length) { notify('No PS5 game of 64 MB or more to test with', 'error'); return; }
+    setRunning(true);
+    setResult(null);
+    try { setResult(await ps5.speedTest(candidates[0].id)); onDone(); } catch (e) { notify(e.message, 'error'); }
+    setRunning(false);
+  };
+  const s = state.settings;
+  return (
+    <div class="stack">
+      <div class="row gap wrap">
+        <button class="btn" onClick={run} disabled={running}>{running ? 'Testing… (about 16 seconds)' : 'Test download speed'}</button>
+        {!result && s.measuredConnections > 0 && <span class="muted">Last test: {s.measuredMBps} MB/s with {s.measuredConnections} connection{s.measuredConnections === 1 ? '' : 's'}</span>}
+      </div>
+      {result && (
+        <div class="speed">
+          {result.results.map((r) => (
+            <div class={`row between${r.connections === result.best ? ' good-text' : ''}`}>
+              <span>{r.connections} connection{r.connections === 1 ? '' : 's'}</span>
+              <b>{r.mbps.toFixed(0)} MB/s{r.connections === result.best ? ' · used by Automatic' : ''}</b>
+            </div>
+          ))}
+        </div>
+      )}
+      <p class="muted small">Reads part of your largest PS5 game from GameVault with 1, 2, 4 and 6 connections, without writing anything, and keeps the fewest connections that reach the top speed.</p>
+    </div>
+  );
+}
+
+export function Settings({ state, refresh, notify, loadGames, onKeys, games }) {
   const [form, setForm] = useState(state.settings);
   const [test, setTest] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -60,13 +137,14 @@ export function Settings({ state, refresh, notify, loadGames, onKeys }) {
   useEffect(() => { onKeys({}); });
 
   const set = (k, v) => setForm({ ...form, [k]: v });
-  const dirty = JSON.stringify(form) !== JSON.stringify(state.settings);
+  const EDITABLE = ['server', 'ps5Drive', 'connections', 'playLimitMBps', 'notify', 'checkFiles', 'transfer', 'nfsExport'];
+  const dirty = EDITABLE.some((k) => form[k] !== state.settings[k]);
   const present = state.drives.map((d) => d.id);
 
   const saveAll = async () => {
     setSaving(true);
     try {
-      const s = await ps5.saveSettings(form);
+      const s = await ps5.saveSettings(Object.fromEntries(EDITABLE.map((k) => [k, form[k]])));
       setForm(s);
       notify('Settings saved');
       await refresh();
@@ -117,9 +195,11 @@ export function Settings({ state, refresh, notify, loadGames, onKeys }) {
         <p class="muted small">PS4 games go through the PS5's installer, which always uses Settings › Storage › Installation location › PS4 games on the console. Change that to install PS4 games to an external drive.</p>
         <label class="field">Connections per download
           <select class="select" value={form.connections} onChange={(e) => set('connections', Number(e.target.value))}>
-            {[1, 2, 3, 4, 6, 8].map((n) => <option value={n}>{n}{n === 4 ? ' (recommended)' : ''}</option>)}
+            <option value={0}>Automatic{state.settings.measuredConnections ? ` (${state.settings.measuredConnections}, from the speed test)` : ' (2 until you run the speed test)'}</option>
+            {[1, 2, 3, 4, 6, 8].map((n) => <option value={n}>{n}</option>)}
           </select>
         </label>
+        <SpeedTest state={state} games={games} notify={notify} onDone={refresh} />
         <label class="field">While a game is running, limit downloads to
           <select class="select" value={form.playLimitMBps} onChange={(e) => set('playLimitMBps', Number(e.target.value))}>
             {[0, 5, 10, 20, 50].map((n) => <option value={n}>{n ? `${n} MB/s` : 'No limit'}</option>)}
@@ -141,13 +221,15 @@ export function Settings({ state, refresh, notify, loadGames, onKeys }) {
         <label class="field">NFS share (for when NFS is supported)
           <input class="input" value={form.nfsExport} placeholder="192.168.0.32:/volume1/Games" onInput={(e) => set('nfsExport', e.target.value)} />
         </label>
-        <p class="muted small">This version downloads over HTTP from GameVault, using several connections at once, which is usually as fast as the network allows. NFS isn't built in yet, so Automatic and NFS both use HTTP for now; your NFS share is kept for when it is.</p>
+        <p class="muted small">This version downloads over HTTP from GameVault, using the number of connections above. NFS isn't built in yet, so Automatic and NFS both use HTTP for now; your NFS share is kept for when it is.</p>
       </section>
 
       <div class="row gap">
         <button class="btn btn-primary btn-lg" onClick={saveAll} disabled={!dirty || saving}>{saving ? 'Saving…' : 'Save settings'}</button>
         {dirty && <button class="btn btn-lg" onClick={() => setForm(state.settings)}>Undo changes</button>}
       </div>
+
+      <HomeScreen state={state} notify={notify} />
 
       <section class="panel stack">
         <h2>Controller and console</h2>

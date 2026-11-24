@@ -27,7 +27,14 @@ export const ps5 = {
   deleteInstalled: (path) => request(local(`/api/installed?path=${encodeURIComponent(path)}`), { method: 'DELETE' }),
   rescan: () => request(local('/api/rescan'), { method: 'POST' }),
   notifyTest: () => request(local('/api/notify-test'), { method: 'POST' }),
-  quit: () => request(local('/api/quit'), { method: 'POST' })
+  quit: () => request(local('/api/quit'), { method: 'POST' }),
+  speedTest: (gameId) => request(local('/api/speed-test'), { method: 'POST', body: { gameId } }),
+  updateCheck: () => request(local('/api/update-check'), { method: 'POST' }),
+  // GameVault restarts as the new version; the request usually ends without an answer.
+  update: () => request(local('/api/update'), { method: 'POST' }).catch((e) => {
+    if (/HTTP|Failed to fetch|NetworkError|Load failed/i.test(e.message) && !/409/.test(e.message)) return { restarting: true };
+    throw e;
+  })
 };
 
 export function vault(server) {
