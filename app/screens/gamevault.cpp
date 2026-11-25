@@ -230,7 +230,7 @@ struct ServiceState
     std::string version, firmware;
     bool game_running = false;
     // settings
-    std::string server, ps5_drive, transfer;
+    std::string server, ps5_drive, ps4_drive, transfer;
     int connections = 0, measured_connections = 0, measured_mbps = 0, play_limit = 0;
     bool notify = true, check_files = true;
     std::vector<Drive> drives;
@@ -252,6 +252,7 @@ ServiceState parse_state(const gv::Json &j)
     const gv::Json &set = j["settings"];
     s.server = set["server"].str();
     s.ps5_drive = set["ps5Drive"].str("internal");
+    s.ps4_drive = set["ps4Drive"].str("internal");
     s.transfer = set["transfer"].str("auto");
     s.connections = static_cast<int>(set["connections"].i64());
     s.measured_connections = static_cast<int>(set["measuredConnections"].i64());
@@ -403,6 +404,7 @@ enum class SettingRow
     server,
     test,
     drive,
+    ps4_drive,
     connections,
     speed_test,
     play_limit,
@@ -1505,8 +1507,34 @@ class GameVault final : public app::Concept
         }
     }
 
+    bool detail_ps4() const
+    {
+        const Game *g = game_by_id(detail_id_);
+        return g && g->platform == "PS4";
+    }
+
+    // Drives this game could go to: any connected drive for PS5 games; for PS4 games
+    // the PS5's installer ("internal") or a USB drive.
+    std::vector<std::string> detail_targets() const
+    {
+        if (detail_ps4())
+            return ps4_targets();
+        std::vector<std::string> ids;
+        for (const Drive &d : state_.drives)
+            ids.push_back(d.id);
+        return ids;
+    }
+
     std::string detail_drive() const
     {
+        if (detail_ps4())
+        {
+            const std::vector<std::string> ids = ps4_targets();
+            auto has = [&](const std::string &id) { return std::find(ids.begin(), ids.end(), id) != ids.end(); };
+            if (!detail_drive_.empty() && has(detail_drive_))
+                return detail_drive_;
+            return has(state_.ps4_drive) ? state_.ps4_drive : "internal";
+        }
         std::vector<std::string> present;
         for (const Drive &d : state_.drives)
             present.push_back(d.id);
@@ -1518,6 +1546,16 @@ class GameVault final : public app::Concept
         if (has(state_.ps5_drive))
             return state_.ps5_drive;
         return "internal";
+    }
+
+    // Where PS4 games can go: installed on this PS5, or copied to a connected USB drive.
+    std::vector<std::string> ps4_targets() const
+    {
+        std::vector<std::string> ids{"internal"};
+        for (const Drive &d : state_.drives)
+            if (d.id.rfind("usb", 0) == 0)
+                ids.push_back(d.id);
+        return ids;
     }
 
     const Drive *drive_by_id(const std::string &id) const
@@ -1558,7 +1596,8 @@ class GameVault final : public app::Concept
         MainAction a;
         const GameStatus st = status_of(g, state_);
         const bool ps4 = g.platform == "PS4";
-        const std::string drive = ps4 ? "internal" : detail_drive();
+        const std::string drive = detail_drive();
+        const bool ps4_install = ps4 && drive == "internal"; // else: the .pkg files go to a USB drive
         const double free = free_on(drive);
         const double need = static_cast<double>(g.size);
         const std::string fw = detail_["requiredFirmware"].str(g.required_fw);
@@ -1620,7 +1659,7 @@ class GameVault final : public app::Concept
             a.ink = Color::rgb(0xFFB4B4);
             a.go = MainAction::storage;
             a.note = "Needs " + format_bytes(need) + "; " + drive_name(drive) + " has " + format_bytes(free) +
-                     " free. Free up space in Storage" + (ps4 ? "." : ", or change the drive.");
+                     " free. Free up space in Storage" + (ps4_install ? "." : ", or change the drive.");
             a.note_color = Color::rgb(0xFFB4B4);
             return a;
         }
@@ -1633,15 +1672,18 @@ class GameVault final : public app::Concept
             a.note_color = Color::rgb(0xF5D58A);
             return a;
         }
-        a.label = ps4 ? "Install" : "Download";
+        a.label = ps4_install ? "Install" : "Download";
         a.go = MainAction::download;
         if (st.status == Status::failed && st.job)
         {
             a.note = "The last attempt failed: " + st.job->error;
             a.note_color = Color::rgb(0xFFB4B4);
         }
-        else if (ps4)
+        else if (ps4_install)
             a.note = "The PS5 installs PS4 games itself, to the drive in its own Storage settings.";
+        else if (ps4)
+            a.note = std::string("Saves the .pkg files to the top folder of ") + drive_name(drive) + ": " + format_bytes(free) +
+                     " free, " + format_bytes(need) + " needed.";
         else
             a.note = std::string("Fits on ") + drive_name(drive) + ": " + format_bytes(free) + " free, " +
                      format_bytes(need) + " needed.";
@@ -1652,7 +1694,7 @@ class GameVault final : public app::Concept
     {
         std::vector<DetailButton::Kind> b{DetailButton::main, DetailButton::favourite};
         const GameStatus st = status_of(g, state_);
-        if (g.platform == "PS5" && state_.drives.size() > 1 && st.status != Status::downloaded)
+        if (detail_targets().size() > 1 && st.status != Status::downloaded)
             b.push_back(DetailButton::drive);
         if (st.installed && st.installed->kind != "ps4-app" && st.status != Status::downloading)
             b.push_back(DetailButton::remove);
@@ -1717,7 +1759,7 @@ class GameVault final : public app::Concept
 
         if (input.is_pressed(Action::north))
             toggle_favourite(feedback);
-        if (input.is_pressed(Action::west) && g->platform == "PS5")
+        if (input.is_pressed(Action::west))
             cycle_drive(feedback);
 
         if (detail_row_ == row_media)
@@ -1794,7 +1836,7 @@ class GameVault final : public app::Concept
             }
             feedback.play(audio::Cue::select);
             const GameStatus st = status_of(*g, state_);
-            const std::string drive = g->platform == "PS4" ? "" : detail_drive();
+            const std::string drive = detail_drive();
             std::string body = "{\"gameId\":" + std::to_string(g->id);
             if (!drive.empty())
                 body += ",\"drive\":" + gv::json_quote(drive);
@@ -1802,7 +1844,8 @@ class GameVault final : public app::Concept
             {
             case MainAction::download:
                 act("POST", "/api/downloads", body + "}",
-                    g->platform == "PS4" ? "Sending " + g->title + " to the PS5's installer" : "Downloading " + g->title);
+                    g->platform == "PS4" && drive == "internal" ? "Sending " + g->title + " to the PS5's installer"
+                                                                : "Downloading " + g->title);
                 break;
             case MainAction::update:
                 if (st.installed && st.installed->kind != "ps4-app")
@@ -1841,14 +1884,15 @@ class GameVault final : public app::Concept
 
     void cycle_drive(app::Feedback &feedback)
     {
-        if (state_.drives.size() < 2)
+        const std::vector<std::string> ids = detail_targets();
+        if (ids.size() < 2)
             return;
         const std::string now = detail_drive();
         std::size_t i = 0;
-        for (; i < state_.drives.size(); ++i)
-            if (state_.drives[i].id == now)
+        for (; i < ids.size(); ++i)
+            if (ids[i] == now)
                 break;
-        detail_drive_ = state_.drives[(i + 1) % state_.drives.size()].id;
+        detail_drive_ = ids[(i + 1) % ids.size()];
         feedback.play(audio::Cue::toggle);
     }
 
@@ -2005,7 +2049,8 @@ class GameVault final : public app::Concept
                 w = f.semibold.measure(label, 24) + 82;
                 break;
             case DetailButton::drive:
-                label = std::string("Save to: ") + drive_name(detail_drive());
+                label = detail_ps4() && detail_drive() == "internal" ? std::string("Save to: Install on PS5")
+                                                                    : std::string("Save to: ") + drive_name(detail_drive());
                 w = f.semibold.measure(label, 24) + 56;
                 break;
             case DetailButton::remove:
@@ -2362,7 +2407,7 @@ class GameVault final : public app::Concept
     std::vector<SettingRow> setting_rows() const
     {
         std::vector<SettingRow> rows{SettingRow::server,     SettingRow::test,       SettingRow::drive,
-                                     SettingRow::connections, SettingRow::speed_test, SettingRow::play_limit,
+                                     SettingRow::ps4_drive,  SettingRow::connections, SettingRow::speed_test, SettingRow::play_limit,
                                      SettingRow::notify,     SettingRow::check_files};
         if (state_.update_ready)
             rows.push_back(SettingRow::update);
@@ -2422,6 +2467,24 @@ class GameVault final : public app::Concept
                 state_.ps5_drive = state_.drives[next].id;
                 save_setting("ps5Drive", gv::json_quote(state_.ps5_drive));
                 feedback.play(audio::Cue::toggle);
+            }
+            break;
+        case SettingRow::ps4_drive:
+            if (step != 0)
+            {
+                // the internal SSD (the PS5's installer) or a USB drive (the .pkg files themselves)
+                const std::vector<std::string> ids = ps4_targets();
+                std::size_t i = 0;
+                for (; i < ids.size(); ++i)
+                    if (ids[i] == state_.ps4_drive)
+                        break;
+                const std::size_t n = ids.size();
+                if (n > 1 || i == n)
+                {
+                    state_.ps4_drive = ids[(i == n ? 0 : i + n + static_cast<std::size_t>(step + static_cast<int>(n))) % n];
+                    save_setting("ps4Drive", gv::json_quote(state_.ps4_drive));
+                    feedback.play(audio::Cue::toggle);
+                }
             }
             break;
         case SettingRow::connections:
@@ -2562,6 +2625,19 @@ class GameVault final : public app::Concept
                 arrows = true;
                 break;
             }
+            case SettingRow::ps4_drive: {
+                label = "PS4 games: save to";
+                if (state_.ps4_drive == "internal")
+                    value = "Install on this PS5";
+                else
+                {
+                    const Drive *d = drive_by_id(state_.ps4_drive);
+                    value = std::string(drive_name(state_.ps4_drive)) + " (.pkg files)" +
+                            (d ? " · " + format_bytes(d->free) + " free" : " · not connected");
+                }
+                arrows = true;
+                break;
+            }
             case SettingRow::connections:
                 label = "Connections per download";
                 value = state_.connections == 0
@@ -2622,7 +2698,7 @@ class GameVault final : public app::Concept
         }
         list.pop_clip();
         std::string about = "GameVault " + state_.version + " · PS5 firmware " + state_.firmware +
-                            " · also open http://<PS5 address>:8687 on a phone or PC. PS4 games install to the console's own install location.";
+                            " · also open http://<PS5 address>:8687 on a phone or PC.";
         ui::text(list, f.regular, fit(f.regular, about, 19, 1920 - 2 * kMargin), kMargin, 960, 19, kMuted);
     }
 
@@ -2782,7 +2858,7 @@ class GameVault final : public app::Concept
                 hints = {{ui::Button::cross, "Select"}};
             hints.push_back({ui::Button::triangle, "Favourite"});
             const Game *g = game_by_id(detail_id_);
-            if (g && g->platform == "PS5" && state_.drives.size() > 1)
+            if (g && detail_targets().size() > 1)
                 hints.push_back({ui::Button::square, "Change drive"});
             hints.push_back({ui::Button::l2, "More", ui::Button::r2});
             hints.push_back({ui::Button::circle, "Back"});

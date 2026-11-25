@@ -25,7 +25,11 @@ export function Details({ id, state, api, games, setGames, notify, onKeys, refre
 
   const present = state.drives.map((d) => d.id);
   const isPs4 = game && game.platform === 'PS4';
-  const chosen = isPs4 ? 'internal' : (drive && present.includes(drive) ? drive : present.includes(state.settings.ps5Drive) ? state.settings.ps5Drive : 'internal');
+  // PS4 games: the PS5's installer ("internal") or a USB drive (the .pkg files, in its top folder).
+  const targets = isPs4 ? present.filter((d) => d === 'internal' || d.startsWith('usb')) : present;
+  const preferred = isPs4 ? state.settings.ps4Drive : state.settings.ps5Drive;
+  const chosen = drive && targets.includes(drive) ? drive : targets.includes(preferred) ? preferred : 'internal';
+  const ps4Install = isPs4 && chosen === 'internal';
   const space = freeOn(state, chosen);
 
   const toggleFavourite = async () => {
@@ -36,8 +40,8 @@ export function Details({ id, state, api, games, setGames, notify, onKeys, refre
     } catch (e) { notify(e.message, 'error'); }
   };
   const cycleDrive = () => {
-    if (isPs4 || present.length < 2) return;
-    setDrive(present[(present.indexOf(chosen) + 1) % present.length]);
+    if (targets.length < 2) return;
+    setDrive(targets[(targets.indexOf(chosen) + 1) % targets.length]);
   };
 
   useEffect(() => { onKeys({ favourite: () => { if (game) toggleFavourite(); }, drive: cycleDrive }); });
@@ -55,8 +59,8 @@ export function Details({ id, state, api, games, setGames, notify, onKeys, refre
   const start = async (opts = {}) => {
     setBusy(true);
     try {
-      await ps5.download(game.id, { drive: isPs4 ? undefined : chosen, ...opts });
-      notify(isPs4 ? `Sending ${game.title} to the PS5's installer` : `Downloading ${game.title}`);
+      await ps5.download(game.id, { drive: chosen, ...opts });
+      notify(ps4Install ? `Sending ${game.title} to the PS5's installer` : `Downloading ${game.title}`);
       await refresh();
     } catch (e) { notify(e.message, 'error'); }
     setBusy(false);
@@ -97,16 +101,17 @@ export function Details({ id, state, api, games, setGames, notify, onKeys, refre
     noteClass = 'bad-text';
   } else if (tooLarge) {
     button = <button class="big blocked" onClick={() => go('storage')} data-autofocus><Icon d={ICONS.stop} size={28} />Too large</button>;
-    note = `Needs ${formatBytes(needed)}; ${space.drive.label} has ${formatBytes(space.free)} free. Free up space in Storage${present.length > 1 && !isPs4 ? ', or change the drive with □' : ''}.`;
+    note = `Needs ${formatBytes(needed)}; ${space.drive.label} has ${formatBytes(space.free)} free. Free up space in Storage${targets.length > 1 && !ps4Install ? ', or change the drive with □' : ''}.`;
     noteClass = 'bad-text';
   } else if (st.status === 'update') {
     button = <button class="big btn-warn" disabled={busy} onClick={() => start({ replace: st.installed.kind === 'ps4-app' ? undefined : st.installed.path })} data-autofocus><Icon d={ICONS.up} size={28} />Update · {formatBytes(needed)}</button>;
     note = `On this PS5 as v${st.installed.version}. The NAS has v${game.version}.${st.installed.kind !== 'ps4-app' ? ' The old copy is deleted once the new one is complete.' : ''}`;
     noteClass = 'warn-text';
   } else {
-    button = <button class="big btn-primary" disabled={busy} onClick={() => start()} data-autofocus><Icon d={ICONS.down} size={28} />{isPs4 ? 'Install' : 'Download'}</button>;
+    button = <button class="big btn-primary" disabled={busy} onClick={() => start()} data-autofocus><Icon d={ICONS.down} size={28} />{ps4Install ? 'Install' : 'Download'}</button>;
     note = st.status === 'failed' && st.failed
       ? `The last attempt failed: ${st.failed.error}`
+      : isPs4 && !ps4Install ? `Saves the .pkg files to the top folder of ${space ? space.drive.label : 'the drive'}: ${space ? formatBytes(space.free) : '—'} free, ${formatBytes(needed)} needed.`
       : isPs4 ? `The PS5 installs PS4 games itself, to the drive set in its Storage settings (Installation location). ${space ? `${formatBytes(space.free)} free on the internal SSD.` : ''}`
         : `Fits on ${space ? space.drive.label : 'the drive'}: ${space ? formatBytes(space.free) : '—'} free, ${formatBytes(needed)} needed.`;
     if (st.status === 'failed') noteClass = 'bad-text';
@@ -147,16 +152,16 @@ export function Details({ id, state, api, games, setGames, notify, onKeys, refre
 
       <div class="facts">
         <div class="panel fact"><div class="muted">Download size</div><b>{formatBytes(needed)}</b></div>
-        <button class="panel fact" onClick={cycleDrive} disabled={isPs4 || present.length < 2}>
+        <button class="panel fact" onClick={cycleDrive} disabled={targets.length < 2}>
           <div class="muted">Saves to</div>
-          <b>{isPs4 ? 'PS5 installer' : space ? space.drive.label : chosen}</b>
-          {!isPs4 && present.length > 1 && <div class="muted small">change: □</div>}
+          <b>{ps4Install ? 'PS5 installer' : space ? space.drive.label : chosen}</b>
+          {targets.length > 1 && <div class="muted small">change: □</div>}
         </button>
         <div class="panel fact"><div class="muted">Version on NAS</div><b>{game.version ? `v${game.version}` : '—'}</b><div class="muted small">{st.installed ? `On PS5: v${st.installed.version || '?'}` : 'Not on this PS5'}</div></div>
         <div class="panel fact"><div class="muted">Needs firmware</div><b class={incompatible ? 'bad-text' : ''}>{fwNeeded || '—'}</b><div class="muted small">{isPs4 ? 'PS4 system version' : `This PS5: ${state.firmware || '?'}${fwNeeded && !incompatible ? ' ✓' : ''}`}</div></div>
       </div>
 
-      {space && !isPs4 && (
+      {space && !ps4Install && (
         <div class="panel">
           <div class="row between"><span>{space.drive.label}</span><b>{formatBytes(space.free)} free</b></div>
           <Bar label="Space" parts={[{ pct: usedPct, color: '#5B8CFF' }, { pct: st.status === 'download' || st.status === 'update' ? needPct : 0, color: tooLarge ? '#F07A7A' : '#A9C2FF' }]} />
@@ -170,7 +175,7 @@ export function Details({ id, state, api, games, setGames, notify, onKeys, refre
           <ul class="files">
             {files.files.map((f) => <li class="row between"><span class="clip">{f.path}</span><span class="muted">{[CATEGORY[f.category], f.version ? `v${f.version}` : null, formatBytes(f.size)].filter(Boolean).join(' · ')}</span></li>)}
           </ul>
-          {isPs4 && <p class="muted small">The game, its updates and add-ons are sent to the installer in that order.</p>}
+          {ps4Install && <p class="muted small">The game, its updates and add-ons are sent to the installer in that order.</p>}
         </div>
       )}
 

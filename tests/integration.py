@@ -312,6 +312,23 @@ try:
     state = call('GET', '/api/state')[1]
     check('connected USB drive shown', 'usb0' in [d['id'] for d in state['drives']])
 
+    # PS4 games set to a USB drive: the .pkg files are saved to the drive's top folder
+    # (not sent to the installer); internal still installs.
+    s, st = call('PUT', '/api/settings', {'ps4Drive': 'ext0'})
+    check('PS4 games refuse extended storage', s == 400)
+    s, st = call('PUT', '/api/settings', {'ps4Drive': 'usb0'})
+    check('PS4 save-to setting saved', s == 200 and st['ps4Drive'] == 'usb0')
+    log_mark = len(open(os.path.join(WORK, 'log.txt')).read())
+    jid = call('POST', '/api/downloads', {'gameId': 3})[1]['id']
+    j = wait(jid, ['done', 'failed'])
+    newlog = open(os.path.join(WORK, 'log.txt')).read()[log_mark:]
+    check('PS4 copied to the USB root', j['state'] == 'done' and j['drive'] == 'usb0'
+          and os.path.getsize(os.path.join(ROOT, 'mnt/usb0/Hades.pkg')) == 1024
+          and os.path.exists(os.path.join(ROOT, 'mnt/usb0/Hades patch.pkg'))
+          and 'INSTALL PKG' not in newlog, (j, newlog[-400:]))
+    check('PS4 USB copy note', 'top folder' in j.get('note', ''), j)
+    call('PUT', '/api/settings', {'ps4Drive': 'internal'})
+
     # The old tile's folder (PPSA99687) is removed: it is checked at start-up,
     # so it was planted before this run began (see the top of the file).
     check('old tile folder removed', not os.path.exists(os.path.join(ROOT, 'data/homebrew/PPSA99687')))

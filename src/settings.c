@@ -14,6 +14,7 @@ static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static void defaults(settings_t *s) {
   memset(s, 0, sizeof *s);
   snprintf(s->ps5_drive, sizeof s->ps5_drive, "internal");
+  snprintf(s->ps4_drive, sizeof s->ps4_drive, "internal");
   s->connections = 0;
   s->play_limit_mbps = 0;
   s->notify = true;
@@ -50,6 +51,12 @@ const char *settings_apply_json(settings_t *s, const char *json) {
     if (valid_drive(drive)) snprintf(s->ps5_drive, sizeof s->ps5_drive, "%s", drive);
     else err = "Unknown drive";
   }
+  const char *ps4 = json_str(v, "ps4Drive", NULL);
+  if (ps4) {
+    /* PS4 games: installed (internal) or copied to a USB drive; extended storage can't hold .pkg files for installing */
+    if (valid_drive(ps4) && strncmp(ps4, "ext", 3)) snprintf(s->ps4_drive, sizeof s->ps4_drive, "%s", ps4);
+    else err = "PS4 games can go to the internal SSD or a USB drive";
+  }
   jval_t *c = json_get(v, "connections");
   if (c && c->type == J_NUM) s->connections = c->n < 0 ? 0 : c->n > 8 ? 8 : (int)c->n;
   jval_t *mc = json_get(v, "measuredConnections");
@@ -77,6 +84,7 @@ void settings_to_json(const settings_t *s, sbuf_t *out) {
   sbuf_puts(out, "{");
   jw_kv_str(out, "server", s->server, false);
   jw_kv_str(out, "ps5Drive", s->ps5_drive, true);
+  jw_kv_str(out, "ps4Drive", s->ps4_drive, true);
   jw_kv_int(out, "connections", s->connections, true);
   jw_kv_int(out, "measuredConnections", s->measured_connections, true);
   jw_kv_int(out, "measuredMBps", s->measured_mbps, true);

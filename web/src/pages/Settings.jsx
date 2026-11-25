@@ -159,7 +159,7 @@ export function Settings({ state, refresh, notify, loadGames, onKeys, games }) {
   useEffect(() => { onKeys({}); });
 
   const set = (k, v) => setForm({ ...form, [k]: v });
-  const EDITABLE = ['server', 'ps5Drive', 'connections', 'playLimitMBps', 'notify', 'checkFiles', 'transfer', 'nfsExport'];
+  const EDITABLE = ['server', 'ps5Drive', 'ps4Drive', 'connections', 'playLimitMBps', 'notify', 'checkFiles', 'transfer', 'nfsExport'];
   const dirty = EDITABLE.some((k) => form[k] !== state.settings[k]);
   const present = state.drives.map((d) => d.id);
 
@@ -211,10 +211,15 @@ export function Settings({ state, refresh, notify, loadGames, onKeys, games }) {
           </select>
         </label>
         <p class="muted small">PS5 games are saved as files in <code>homebrew</code> on that drive (<code>/data/homebrew</code> on the internal SSD), where ShadowMountPlus finds them. You can still pick another drive for a single game with □ on its page.</p>
-        <div class="field">PS4 games: save to
-          <div class="readonly">The PS5's own setting</div>
-        </div>
-        <p class="muted small">PS4 games go through the PS5's installer, which always uses Settings › Storage › Installation location › PS4 games on the console. Change that to install PS4 games to an external drive.</p>
+        <label class="field">PS4 games: save to
+          <select class="select" value={form.ps4Drive} onChange={(e) => set('ps4Drive', e.target.value)}>
+            {ALL_DRIVES.filter(([id]) => (id === 'internal' || id.startsWith('usb')) && (present.includes(id) || id === form.ps4Drive)).map(([id, label]) => {
+              const d = state.drives.find((x) => x.id === id);
+              return <option value={id}>{id === 'internal' ? 'Install on this PS5' : `${label} (.pkg files)${d ? ` · ${formatBytes(d.free)} free` : ' · not connected'}`}</option>;
+            })}
+          </select>
+        </label>
+        <p class="muted small">Install on this PS5: the game is sent to the PS5's installer, which uses the console's Settings › Storage › Installation location › PS4 games. A USB drive: the .pkg files (game, updates, add-ons) are saved in the drive's top folder, to install from there later.</p>
         <label class="field">Connections per download
           <select class="select" value={form.connections} onChange={(e) => set('connections', Number(e.target.value))}>
             <option value={0}>Automatic{state.settings.measuredConnections ? ` (${state.settings.measuredConnections}, from the speed test)` : ' (2 until you run the speed test)'}</option>

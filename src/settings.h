@@ -6,6 +6,7 @@
 typedef struct {
   char server[256];      /* GameVault, e.g. http://192.168.0.32:8686 */
   char ps5_drive[16];    /* "internal", "usb0".."usb7", "ext0".."ext3" */
+  char ps4_drive[16];    /* "internal" (the PS5's installer) or "usb0".."usb7" (copy the .pkg to the drive's root) */
   int connections;       /* parallel connections per download, 1..8; 0 = automatic */
   int measured_connections; /* best count from the last speed test (used by automatic) */
   int measured_mbps;     /* speed reached in that test, MB/s */

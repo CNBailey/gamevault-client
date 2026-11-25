@@ -565,6 +565,13 @@ static void run_ps5(job_t *j) {
     if (console_delete(j->replace, err, sizeof err)) log_msg("could not remove old copy %s: %s", j->replace, err);
   }
   console_rescan();
+  if (!strcmp(j->platform, "PS4")) {
+    drive_t to;
+    pthread_mutex_lock(&lock);
+    snprintf(j->note, sizeof j->note, "Saved to the top folder of %s, ready to install from there.",
+             console_drive(j->drive, &to) ? to.label : j->drive);
+    pthread_mutex_unlock(&lock);
+  }
   set_state(j, "done");
   log_msg("download %s finished", j->title);
   if (settings_get().notify) platform_notify("GameVault: download complete", j->title);
@@ -623,8 +630,8 @@ static void *worker(void *arg) {
     pthread_mutex_unlock(&lock);
 
     game_running = platform_game_running();
-    if (!strcmp(j->platform, "PS4")) run_ps4(j);
-    else run_ps5(j);
+    if (!strcmp(j->platform, "PS4") && !strcmp(j->drive, "internal")) run_ps4(j);
+    else run_ps5(j); /* PS5 games, and PS4 .pkg files copied to a USB drive */
   }
   return NULL;
 }
@@ -737,13 +744,19 @@ int downloads_add(int64_t game_id, const char *files_json, const char *replace_p
   const char *cover = json_str(game, "cover", "");
   if (cover[0] == '/') snprintf(j->cover, sizeof j->cover, "%s%s", s.server, cover);
   else copy(j->cover, sizeof j->cover, cover);
-  copy(j->drive, sizeof j->drive, !strcmp(platform, "PS4") ? "internal" : (drive && *drive ? drive : s.ps5_drive));
+  const bool ps4 = !strcmp(platform, "PS4");
+  /* PS4: "internal" sends the .pkg files to the PS5's installer; a USB drive gets the
+     files themselves, in its top folder, to install from later. */
+  const char *target = drive && *drive ? drive : ps4 ? s.ps4_drive : s.ps5_drive;
+  if (ps4 && strcmp(target, "internal") && strncmp(target, "usb", 3)) target = "internal";
+  copy(j->drive, sizeof j->drive, target);
+  const bool ps4_copy = ps4 && strcmp(j->drive, "internal");
   copy(j->state, sizeof j->state, "queued");
   copy(j->replace, sizeof j->replace, replace_path);
   j->created = now_ms();
 
   drive_t d;
-  if (!console_drive(j->drive, &d) || (strcmp(platform, "PS4") && !d.present)) {
+  if (!console_drive(j->drive, &d) || ((!ps4 || ps4_copy) && !d.present)) {
     snprintf(err, errlen, "That drive is not connected to the PS5");
     goto out;
   }
@@ -781,6 +794,11 @@ int downloads_add(int64_t game_id, const char *files_json, const char *replace_p
       snprintf(df->dest, sizeof df->dest, "%s/%s", d.homebrew, name);
     } else if (!strcmp(platform, "PS5")) {
       snprintf(df->dest, sizeof df->dest, "%s/%s/%s", d.homebrew, folder, path);
+    } else if (ps4_copy) {
+      const char *leaf = strrchr(path, '/');
+      char name[256];
+      clean_name(leaf ? leaf + 1 : path, name, sizeof name);
+      snprintf(df->dest, sizeof df->dest, "%s/%s", d.root, name);
     }
     j->total += df->size;
   }
