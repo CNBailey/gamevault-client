@@ -28,7 +28,7 @@ That copy comes from your GameVault server, which fetches the newest release fro
 
 If you had the 0.2 tile on the home screen and it shows an error, delete the tile from the home screen (Options › Delete) and load ShadowMountPlus again, so it adds the new app.
 
-The app's source is in `app/`; `tools/build-app.sh app` builds it (and `tools/build-app.sh snapshots` renders its screens on a PC, with GameVault running on port 8687).
+The app's source is in `app/`; `tools/build-app.sh app` builds it (and `tools/build-app.sh snapshots` renders its screens on a PC, with GameVault running on port 8687; `tools/preview-server.py PORT` is a stand-in server with made-up games to point it at).
 
 ## Where games go
 

@@ -224,7 +224,16 @@ static void api(const http_req_t *req, http_res_t *res) {
     res_json(res, 200, &b);
     return;
   }
-  if (is(req, "POST", "/api/open")) { tile_open_later(); ok(res); return; }
+  if (is(req, "POST", "/api/open")) {
+    /* Optional {"url": "https://..."}: a trailer, opened once the app closes. */
+    jval_t *body = json_parse(req->body_len ? req->body : "{}");
+    const char *url = json_str(body, "url", NULL);
+    if (url && strncmp(url, "https://", 8) && strncmp(url, "http://", 7)) url = NULL;
+    tile_open_later(url);
+    json_free(body);
+    ok(res);
+    return;
+  }
   if (is(req, "POST", "/api/update-check")) { tile_check_now(); ok(res); return; }
   if (is(req, "POST", "/api/update")) {
     int rc = tile_update_now(err, sizeof err);   /* only returns when it failed */

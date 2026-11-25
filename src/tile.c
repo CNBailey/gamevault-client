@@ -379,23 +379,32 @@ void tile_json(sbuf_t *out) {
   pthread_mutex_unlock(&lock);
 }
 
+static char open_url[1024];
+
 static void *open_thread(void *arg) {
   (void)arg;
+  char url[1024];
+  pthread_mutex_lock(&lock);
+  snprintf(url, sizeof url, "%s", open_url[0] ? open_url : "http://127.0.0.1:8687/?tv=1");
+  pthread_mutex_unlock(&lock);
   /* Let the tile app close first: wait (up to 6 s) until no app is in front, then a moment more. */
   for (int i = 0; i < 30 && platform_game_running(); i++) usleep(200000);
   usleep(700000);
-  int rc = platform_open_browser("http://127.0.0.1:8687/?tv=1");
-  log_msg("tile: opened the browser (result 0x%08x)", (unsigned)rc);
+  int rc = platform_open_browser(url);
+  log_msg("tile: opened the browser at %s (result 0x%08x)", url, (unsigned)rc);
   if (rc) {
     sleep(2);
-    rc = platform_open_browser("http://127.0.0.1:8687/?tv=1");
+    rc = platform_open_browser(url);
     log_msg("tile: opened the browser again (result 0x%08x)", (unsigned)rc);
   }
   return NULL;
 }
 
-void tile_open_later(void) {
-  log_msg("tile: asked to open the interface");
+void tile_open_later(const char *url) {
+  log_msg("tile: asked to open %s", url && *url ? url : "the interface");
+  pthread_mutex_lock(&lock);
+  snprintf(open_url, sizeof open_url, "%s", url && *url ? url : "");
+  pthread_mutex_unlock(&lock);
   pthread_t t;
   if (pthread_create(&t, NULL, open_thread, NULL) == 0) pthread_detach(t);
 }

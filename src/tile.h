@@ -13,7 +13,7 @@ void tile_init(void);
 /* {installed, path, elfVersion, latestVersion, updateAvailable, updateReady, checkError, checkedAt} */
 void tile_json(sbuf_t *out);
 /* Opens the interface in the PS5 browser after a moment (the tile app closes first). */
-void tile_open_later(void);
+void tile_open_later(const char *url); /* NULL: the web interface */
 /* Checks GameVault for a newer version now. */
 void tile_check_now(void);
 /* Restarts GameVault with the newer version. Returns only on failure:

@@ -59,8 +59,7 @@ const Color kWhite = Color::rgb(0xFFFFFF);
 
 constexpr const char *kService = "http://127.0.0.1:8687";
 constexpr float kMargin = 64.0f;
-constexpr float kSideX = 1488.0f; // the storage panel on the right
-constexpr float kSideW = 368.0f;
+constexpr float kSideX = 1920.0f - kMargin + 40.0f; // content right edge + 40 (no side panel any more)
 
 constexpr const char *kTechniques[] = {
     "Library from your GameVault server, with covers",
@@ -150,6 +149,32 @@ std::string upper_ascii(std::string s)
 }
 
 // Shortens text with an ellipsis until it fits `width`.
+// Fast start, gentle stop (k from 0 to 1).
+float ease_out(float k)
+{
+    k = std::max(0.0f, std::min(1.0f, k));
+    const float r = 1.0f - k;
+    return 1.0f - r * r * r;
+}
+
+// The part of a w x h picture that fills `box` without stretching it: the
+// picture is scaled to cover the box and the overflow is cropped, around
+// (fx, fy) (0.5, 0.5 is the middle; a lower fy keeps more of the top).
+Rect fill_uv(int w, int h, const Rect &box, float fx = 0.5f, float fy = 0.5f)
+{
+    if (w <= 0 || h <= 0 || box.w <= 0 || box.h <= 0)
+        return gfx::kFullUv;
+    const float pic = static_cast<float>(w) / static_cast<float>(h);
+    const float want = box.w / box.h;
+    if (pic > want) // wider than the box: crop the sides
+    {
+        const float u = want / pic;
+        return {(1.0f - u) * fx, 0.0f, u, 1.0f};
+    }
+    const float v = pic / want; // taller: crop top and bottom
+    return {0.0f, (1.0f - v) * fy, 1.0f, v};
+}
+
 std::string fit(const ui::FontRef &font, const std::string &text, float size, float width)
 {
     if (font.measure(text, size) <= width)
@@ -175,6 +200,7 @@ struct Game
     std::int64_t size = 0;
     bool favourite = false;
     std::uint32_t cover = 0; // texture, 0 until loaded
+    int cover_w = 0, cover_h = 0;
     bool cover_asked = false;
     bool cover_failed = false;
 };
@@ -365,11 +391,11 @@ constexpr const char *kSorts[] = {"Title A–Z", "Date added", "Release date", "
 constexpr int kSortCount = 4;
 
 // The grid
-constexpr int kColumns = 5;
-constexpr float kTileW = 236.0f;
-constexpr float kTileH = 354.0f;
-constexpr float kTileGapX = 26.0f;
-constexpr float kRowH = kTileH + 78.0f;
+constexpr int kColumns = 7;
+constexpr float kTileW = 228.0f;
+constexpr float kTileH = 342.0f;
+constexpr float kTileGapX = 32.0f; // 7 x 228 + 6 x 32 = 1788: the full width
+constexpr float kRowH = kTileH + 84.0f;
 constexpr float kGridTop = 228.0f;
 
 enum class SettingRow
@@ -411,7 +437,7 @@ class GameVault final : public app::Concept
     {
         for (Game &g : games_)
             gv::delete_texture(g.cover);
-        gv::delete_texture(detail_backdrop_);
+        clear_detail_media();
     }
 
     const app::ConceptInfo &info() const override
@@ -433,16 +459,99 @@ class GameVault final : public app::Concept
         age_ = 0.0f;
     }
 
+    // ---- opening animation ---------------------------------------------------------------
+
+    // Shown from launch until the library is ready (or there's something to
+    // say about why it isn't), and for at least 1.4 s so it reads as intended.
+    bool splash_ready() const
+    {
+        if (snapshot_)
+            return splash_age_ > 1.4f; // long enough for the tour to picture it
+        if (splash_age_ > 14.0f)
+            return true; // the screens explain what's wrong from here
+        if (splash_age_ < 1.4f)
+            return false;
+        if (!service_ok_)
+            return false;
+        return server().empty() || !games_.empty() || !games_error_.empty();
+    }
+
+    void draw_splash(gfx::DrawList &list) const
+    {
+        const ui::Fonts &f = context_.fonts;
+        const float fade = splash_out_ > 0.0f ? std::max(0.0f, 1.0f - splash_out_ / 0.45f) : 1.0f;
+        list.push_opacity(fade);
+        list.gradient_rect({0, 0, 1920, 1080}, 0, kBg, Color::rgb(0x111A2E));
+        const float t = splash_age_;
+        // The V: each stroke grows from its top, the second a moment later.
+        const float s = 3.2f, mx = 960 - 32 * s, my = 330;
+        const float a = ease_out(std::min(1.0f, t / 0.55f));
+        const float b = ease_out(std::max(0.0f, std::min(1.0f, (t - 0.18f) / 0.55f)));
+        auto lerp = [](float p, float q, float k) { return p + (q - p) * k; };
+        if (a > 0)
+        {
+            const float left[] = {mx + 7 * s, my + 7 * s, mx + 20 * s, my + 7 * s,
+                                  mx + lerp(20, 37, a) * s, my + lerp(7, 57, a) * s, mx + lerp(7, 25, a) * s, my + lerp(7, 57, a) * s};
+            list.polygon(left, 4, kAccent);
+        }
+        if (b > 0)
+        {
+            const float right[] = {mx + 57 * s, my + 7 * s, mx + 44 * s, my + 7 * s,
+                                   mx + lerp(44, 27, b) * s, my + lerp(7, 57, b) * s, mx + lerp(57, 39, b) * s, my + lerp(7, 57, b) * s};
+            list.polygon(right, 4, kAccent2);
+        }
+        // a soft glow that breathes while it waits
+        const float glow = 0.18f + 0.08f * std::sin(t * 2.6f);
+        list.glow({960 - 110, my + 10, 220, 170}, 60, 70, kAccent.with_alpha(glow * b));
+        // The name
+        const float n = ease_out(std::max(0.0f, std::min(1.0f, (t - 0.45f) / 0.5f)));
+        list.push_opacity(n);
+        const float w1 = f.semibold.measure("Game", 64), w2 = f.semibold.measure("Vault", 64);
+        const float nx = 960 - (w1 + w2) / 2;
+        const float ny = 640 + (1.0f - n) * 18;
+        ui::text(list, f.semibold, "Game", nx, ny, 64, kInk);
+        ui::text(list, f.semibold, "Vault", nx + w1, ny, 64, kAccent);
+        list.pop_opacity();
+        // Three dots, then what it's doing
+        const float d = std::max(0.0f, std::min(1.0f, (t - 0.9f) / 0.4f));
+        list.push_opacity(d);
+        for (int i = 0; i < 3; ++i)
+        {
+            const float k = 0.5f + 0.5f * std::sin(t * 5.0f - static_cast<float>(i) * 0.9f);
+            list.circle(960 - 28 + static_cast<float>(i) * 28, 720, 6 + 2 * k, kAccent2.with_alpha(0.35f + 0.65f * k));
+        }
+        std::string line;
+        if (!service_ok_)
+            line = status_line_.empty() ? "Starting GameVault" : status_line_;
+        else if (!server().empty() && games_.empty())
+            line = "Loading your library";
+        ui::text(list, f.regular, fit(f.regular, line, 22, 1400), 960, 790, 22, kMuted, Align::center);
+        list.pop_opacity();
+        list.pop_opacity();
+    }
+
     // ---- update ---------------------------------------------------------------------
 
     void update(const InputFrame &input, float dt, app::Feedback &feedback) override
     {
         age_ += dt;
         clock_ += dt;
+        splash_age_ += dt;
+        if (splash_on_ && splash_ready())
+        {
+            splash_out_ += dt;
+            if (splash_out_ > 0.45f)
+            {
+                splash_on_ = false;
+                age_ = 0.0f; // the library's tiles fade in after the splash
+            }
+        }
         api_.run_posted();
         images_.run_posted();
         poll(dt);
         toast_time_ = std::max(0.0f, toast_time_ - dt);
+        if (splash_on_ && splash_out_ == 0.0f)
+            return;
 
         if (prompt_.is_open())
         {
@@ -502,6 +611,8 @@ class GameVault final : public app::Concept
         }
         scroll_.update(dt, 14.0f);
         list_scroll_.update(dt, 14.0f);
+        page_scroll_.update(dt, 12.0f);
+        media_scroll_.update(dt, 14.0f);
         request_visible_covers();
     }
 
@@ -515,11 +626,14 @@ class GameVault final : public app::Concept
         frame.backdrop.time = clock_;
 
         gfx::DrawList &list = frame.scene;
-        draw_header(list);
         if (details_open_)
-            draw_details(list);
+        {
+            draw_details(list); // the key art goes under the header, not over it
+            draw_header(list);
+        }
         else
         {
+            draw_header(list);
             switch (section_)
             {
             case Section::library:
@@ -536,11 +650,15 @@ class GameVault final : public app::Concept
                 break;
             }
         }
-        if (!details_open_ && section_ != Section::settings && state_.loaded)
-            draw_side_panel(list);
         draw_hints(list);
+        if (!details_open_ && state_.loaded)
+            draw_status_strip(list);
         if (toast_time_ > 0.0f)
             draw_toast(frame.overlay);
+        if (details_open_ && viewer_open_)
+            draw_viewer(frame.overlay);
+        if (splash_on_)
+            draw_splash(frame.overlay);
         if (confirm_open_)
             draw_confirm(frame.overlay);
         if (prompt_.is_open() || prompt_.visible())
@@ -554,10 +672,19 @@ class GameVault final : public app::Concept
     std::span<const app::TourStep> tour() const override
     {
         static const app::TourStep kTour[] = {
+            {1.1f, 0, Direction::none, "opening"},
             {1.5f, 0, Direction::none, "library"},
             {0.4f, 0, Direction::right},
             {0.6f, action_bit(Action::confirm), Direction::none, nullptr},
-            {1.2f, 0, Direction::none, "details"},
+            {2.0f, 0, Direction::none, "details"},
+            {0.4f, 0, Direction::down},
+            {1.2f, 0, Direction::none, "details_media"},
+            {0.4f, 0, Direction::right},
+            {0.4f, action_bit(Action::confirm), Direction::none, nullptr},
+            {0.8f, 0, Direction::none, "screenshot"},
+            {0.4f, action_bit(Action::back), Direction::none, nullptr},
+            {0.4f, 0, Direction::down},
+            {1.2f, 0, Direction::none, "details_info"},
             {0.4f, action_bit(Action::back), Direction::none, nullptr},
             {0.6f, action_bit(Action::page_next), Direction::none, nullptr},
             {0.8f, 0, Direction::none, "downloads"},
@@ -765,7 +892,11 @@ class GameVault final : public app::Concept
                     if (g.id != id)
                         continue;
                     if (ok)
+                    {
                         g.cover = gv::upload_texture(*image);
+                        g.cover_w = image->width;
+                        g.cover_h = image->height;
+                    }
                     else
                         g.cover_failed = true;
                 }
@@ -951,6 +1082,12 @@ class GameVault final : public app::Concept
             else if (!input.nav_repeat)
                 feedback.play(audio::Cue::error, 1.0f, 0.0f, 0.5f);
         }
+        if (input.is_pressed(Action::jump_next) || input.is_pressed(Action::jump_prev))
+        {
+            filter_ = (filter_ + (input.is_pressed(Action::jump_next) ? 1 : kFilterCount - 1)) % kFilterCount;
+            rebuild_rows();
+            feedback.play(audio::Cue::tab);
+        }
         if (input.is_pressed(Action::west))
         {
             filter_ = (filter_ + 1) % kFilterCount;
@@ -1012,6 +1149,8 @@ class GameVault final : public app::Concept
         const ui::Fonts &f = context_.fonts;
         // Filter and sort line
         float x = kMargin;
+        ui::draw_button(list, f, ui::GlyphStyle::dark(), ui::Button::l2, x, 155, 34);
+        x += ui::button_width(ui::Button::l2, 34) + 16;
         for (int i = 0; i < kFilterCount; ++i)
         {
             const float w = f.semibold.measure(kFilters[i], 22) + 40;
@@ -1023,6 +1162,7 @@ class GameVault final : public app::Concept
             ui::text(list, f.semibold, kFilters[i], x + w / 2, 163, 22, i == filter_ ? kBg : kInk2, Align::center);
             x += w + 10;
         }
+        ui::draw_button(list, f, ui::GlyphStyle::dark(), ui::Button::r2, x + 6, 155, 34);
         ui::text(list, f.regular, std::string("Sort: ") + kSorts[sort_], kSideX - 40, 163, 21, kMuted, Align::right);
 
         if (!service_ok_ || server().empty() || (!games_error_.empty() && games_.empty()) || rows_.empty())
@@ -1061,7 +1201,7 @@ class GameVault final : public app::Concept
             return;
         }
 
-        list.push_clip({0, 196, kSideX - 20, 1080 - 196 - 90});
+        list.push_clip({0, 196, kSideX - 20, 964 - 196});
         const float scroll = scroll_.value;
         for (std::size_t i = 0; i < rows_.size(); ++i)
         {
@@ -1079,13 +1219,15 @@ class GameVault final : public app::Concept
             list.pop_opacity();
         }
         list.pop_clip();
+        // the grid fades out above the footer instead of running into it
+        list.gradient_rect({0, 904, 1920, 62}, 0, Color::rgb(0x0F1626, 0.0f), Color::rgb(0x0F1626, 0.95f));
     }
 
     void draw_cover(gfx::DrawList &list, const Game &g, const Rect &r, float radius, float title_size) const
     {
         const ui::Fonts &f = context_.fonts;
         if (g.cover)
-            list.image(g.cover, r, gfx::kFullUv, kWhite, radius);
+            list.image(g.cover, r, fill_uv(g.cover_w, g.cover_h, r), kWhite, radius);
         else
         {
             static const std::uint32_t palette[] = {0x3A4A3A, 0x6A2D2D, 0x3D4A2A, 0x5A4420, 0x2A3542,
@@ -1201,6 +1343,7 @@ class GameVault final : public app::Concept
         enum Kind
         {
             main,
+            trailer,
             favourite,
             remove,
             drive,
@@ -1208,49 +1351,187 @@ class GameVault final : public app::Concept
         Rect rect;
     };
 
+    // A screenshot on the game page, loaded once the page opens.
+    struct Shot
+    {
+        std::string url;
+        std::uint32_t tex = 0;
+        int w = 0, h = 0;
+        bool failed = false;
+    };
+
+    // Rows on the game page, top to bottom (up / down, or L2 / R2, move between them).
+    enum DetailRow
+    {
+        row_actions = 0,
+        row_media = 1,
+        row_info = 2,
+    };
+
+    // Page layout, in page coordinates (the page scrolls under the header).
+    static constexpr float kMediaTop = 770.0f;  // "Trailer and screenshots" heading
+    static constexpr float kThumbW = 400.0f;
+    static constexpr float kThumbH = 225.0f;
+    static constexpr float kThumbGap = 22.0f;
+    static constexpr float kInfoTop = 1090.0f; // the two information panels
+
+    void clear_detail_media()
+    {
+        gv::delete_texture(detail_backdrop_);
+        detail_backdrop_ = 0;
+        detail_backdrop_w_ = detail_backdrop_h_ = 0;
+        for (Shot &s : detail_shots_)
+            gv::delete_texture(s.tex);
+        detail_shots_.clear();
+        detail_videos_.clear();
+    }
+
     void open_details(const Game &g)
     {
         details_open_ = true;
         detail_id_ = g.id;
         detail_focus_ = 0;
+        detail_row_ = row_actions;
+        media_focus_ = 0;
+        viewer_open_ = false;
         detail_confirm_delete_ = false;
         detail_ = gv::Json();
+        detail_files_ = gv::Json();
         detail_drive_.clear();
-        gv::delete_texture(detail_backdrop_);
-        detail_backdrop_ = 0;
+        clear_detail_media();
+        page_scroll_.value = page_scroll_.target = 0.0f;
+        media_scroll_.value = media_scroll_.target = 0.0f;
         const std::string base = server();
+        const std::string cover = media(g.cover_url);
         const std::int64_t id = g.id;
-        api_.run([this, base, id] {
+        api_.run([this, base, id, cover] {
             gv::HttpResult r = gv::http("GET", base + "/api/v1/games/" + std::to_string(id), {}, 10);
             gv::HttpResult files = gv::http("GET", base + "/api/v1/games/" + std::to_string(id) + "/files", {}, 10);
-            auto image = std::make_shared<gv::Image>();
-            bool art = false;
             bool ok = false;
             gv::Json j = gv::Json::parse(r.body, &ok);
-            if (ok)
-            {
-                std::string backdrop = j["backdrop"].str();
-                if (backdrop.rfind("/", 0) == 0)
-                {
-                    gv::HttpResult b = gv::http("GET", base + backdrop, {}, 15, 12u * 1024u * 1024u);
-                    art = b.ok() && gv::decode_image(b.body, image.get());
-                    if (art)
-                        gv::shrink_to(image.get(), 1280);
-                }
-            }
             bool fok = false;
             gv::Json fj = gv::Json::parse(files.body, &fok);
-            api_.post([this, j, fj, ok, fok, id, image, art] {
-                if (detail_id_ != id)
+            api_.post([this, j, fj, ok, fok, id] {
+                if (detail_id_ != id || !details_open_)
                     return;
                 if (ok)
                     detail_ = j;
                 if (fok)
                     detail_files_ = fj;
-                if (art)
-                    detail_backdrop_ = gv::upload_texture(*image);
+                for (const gv::Json &v : detail_["videos"].items())
+                    if (!v["id"].str().empty())
+                        detail_videos_.push_back({v["id"].str(), clean(v["name"].str("Trailer"))});
+                for (const gv::Json &x : detail_["screenshots"].items())
+                {
+                    const std::string url = media(x.str());
+                    if (!url.empty() && detail_shots_.size() < 8)
+                        detail_shots_.push_back(Shot{url});
+                }
+                for (std::size_t i = 0; i < detail_shots_.size(); ++i)
+                    load_shot(id, i);
+            });
+            // The key art behind the page: the backdrop, or the poster when
+            // there's none. Kept large (1920) so it isn't blurry full screen.
+            std::string art;
+            if (ok && j["backdrop"].str().rfind("/", 0) == 0)
+                art = base + j["backdrop"].str();
+            else
+                art = cover;
+            if (art.empty())
+                return;
+            gv::HttpResult b = gv::http("GET", art, {}, 15, 16u * 1024u * 1024u);
+            auto image = std::make_shared<gv::Image>();
+            if (!b.ok() || !gv::decode_image(b.body, image.get()))
+                return;
+            gv::shrink_to(image.get(), 1920);
+            api_.post([this, image, id] {
+                if (detail_id_ != id || !details_open_)
+                    return;
+                gv::delete_texture(detail_backdrop_);
+                detail_backdrop_ = gv::upload_texture(*image);
+                detail_backdrop_w_ = image->width;
+                detail_backdrop_h_ = image->height;
             });
         });
+    }
+
+    void load_shot(std::int64_t id, std::size_t index)
+    {
+        const std::string url = detail_shots_[index].url;
+        images_.run([this, id, index, url] {
+            gv::HttpResult r = gv::http("GET", url, {}, 15, 12u * 1024u * 1024u);
+            auto image = std::make_shared<gv::Image>();
+            const bool ok = r.ok() && gv::decode_image(r.body, image.get());
+            if (ok)
+                gv::shrink_to(image.get(), 1280);
+            images_.post([this, id, index, image, ok] {
+                if (detail_id_ != id || !details_open_ || index >= detail_shots_.size())
+                    return;
+                Shot &s = detail_shots_[index];
+                if (!ok)
+                {
+                    s.failed = true;
+                    return;
+                }
+                s.tex = gv::upload_texture(*image);
+                s.w = image->width;
+                s.h = image->height;
+            });
+        });
+    }
+
+    void close_details()
+    {
+        details_open_ = false;
+        viewer_open_ = false;
+        clear_detail_media();
+    }
+
+    // Trailer first (when the game has one), then the screenshots.
+    int media_count() const
+    {
+        return (detail_videos_.empty() ? 0 : 1) + static_cast<int>(detail_shots_.size());
+    }
+
+    bool has_row(int row) const
+    {
+        return row == row_actions || row == row_info || (row == row_media && media_count() > 0);
+    }
+
+    float row_scroll(int row) const
+    {
+        switch (row)
+        {
+        case row_media:
+            return 300.0f;
+        case row_info:
+            return 560.0f;
+        default:
+            return 0.0f;
+        }
+    }
+
+    void watch_trailer()
+    {
+        if (detail_videos_.empty())
+            return;
+        const auto &v = detail_videos_.front();
+        const std::string url = "https://www.youtube.com/watch?v=" + v.first;
+        ask("Watch \"" + v.second + "\" in the PS5's web browser? GameVault closes while you watch: open it again from the home screen.",
+            [this, url] {
+                api_.run([this, url] {
+                    gv::HttpResult r = gv::http("POST", std::string(kService) + "/api/open", "{\"url\":" + gv::json_quote(url) + "}", 5);
+                    api_.post([this, r] {
+                        if (!r.ok())
+                        {
+                            toast("Couldn't open the trailer: " + (r.error.empty() ? std::string("GameVault didn't answer") : r.error), true);
+                            return;
+                        }
+                        sys::log("[GV] closing for the trailer");
+                        sys::quit();
+                    });
+                });
+            });
     }
 
     std::string detail_drive() const
@@ -1398,7 +1679,10 @@ class GameVault final : public app::Concept
 
     std::vector<DetailButton::Kind> detail_buttons(const Game &g) const
     {
-        std::vector<DetailButton::Kind> b{DetailButton::main, DetailButton::favourite};
+        std::vector<DetailButton::Kind> b{DetailButton::main};
+        if (!detail_videos_.empty())
+            b.push_back(DetailButton::trailer);
+        b.push_back(DetailButton::favourite);
         const GameStatus st = status_of(g, state_);
         if (g.platform == "PS5" && state_.drives.size() > 1 && st.status != Status::downloaded)
             b.push_back(DetailButton::drive);
@@ -1407,15 +1691,105 @@ class GameVault final : public app::Concept
         return b;
     }
 
-    void update_details(const InputFrame &input, app::Feedback &feedback)
+    void move_row(int step, app::Feedback &feedback)
     {
-        Game *g = find_game(detail_id_);
-        if (!g || input.is_pressed(Action::back))
+        int row = detail_row_;
+        do
+            row += step;
+        while (row >= row_actions && row <= row_info && !has_row(row));
+        if (row < row_actions || row > row_info)
         {
-            details_open_ = false;
+            feedback.play(audio::Cue::error, 1.0f, 0.0f, 0.5f);
+            return;
+        }
+        detail_row_ = row;
+        feedback.play(audio::Cue::focus);
+    }
+
+    void update_viewer(const InputFrame &input, app::Feedback &feedback)
+    {
+        const int count = static_cast<int>(detail_shots_.size());
+        if (input.is_pressed(Action::back) || input.is_pressed(Action::confirm) || count == 0)
+        {
+            viewer_open_ = false;
             feedback.play(audio::Cue::back);
             return;
         }
+        const int step = input.nav == Direction::right || input.is_pressed(Action::jump_next) ? 1
+                         : input.nav == Direction::left || input.is_pressed(Action::jump_prev) ? -1
+                                                                                               : 0;
+        if (step != 0)
+        {
+            viewer_index_ = (viewer_index_ + step + count) % count;
+            feedback.play(audio::Cue::focus);
+        }
+    }
+
+    void update_details(const InputFrame &input, app::Feedback &feedback)
+    {
+        Game *g = find_game(detail_id_);
+        if (viewer_open_)
+        {
+            update_viewer(input, feedback);
+            return;
+        }
+        if (!g || input.is_pressed(Action::back))
+        {
+            close_details();
+            feedback.play(audio::Cue::back);
+            return;
+        }
+        if (!has_row(detail_row_))
+            detail_row_ = row_actions;
+        if (input.nav == Direction::down || input.is_pressed(Action::jump_next))
+            move_row(1, feedback);
+        else if (input.nav == Direction::up || input.is_pressed(Action::jump_prev))
+            move_row(-1, feedback);
+        page_scroll_.target = row_scroll(detail_row_);
+
+        if (input.is_pressed(Action::north))
+            toggle_favourite(feedback);
+        if (input.is_pressed(Action::west) && g->platform == "PS5")
+            cycle_drive(feedback);
+
+        if (detail_row_ == row_media)
+        {
+            const int count = media_count();
+            if (input.nav == Direction::left && media_focus_ > 0)
+            {
+                --media_focus_;
+                feedback.play(audio::Cue::focus);
+            }
+            else if (input.nav == Direction::right && media_focus_ + 1 < count)
+            {
+                ++media_focus_;
+                feedback.play(audio::Cue::focus);
+            }
+            media_focus_ = std::max(0, std::min(media_focus_, count - 1));
+            // Keep the focused picture on screen (the row is wider than the page).
+            const float x = static_cast<float>(media_focus_) * (kThumbW + kThumbGap);
+            const float view = 1920 - 2 * kMargin;
+            if (x - media_scroll_.target < 0)
+                media_scroll_.target = x;
+            else if (x + kThumbW - media_scroll_.target > view)
+                media_scroll_.target = x + kThumbW - view;
+            if (input.is_pressed(Action::confirm))
+            {
+                const bool trailer = !detail_videos_.empty() && media_focus_ == 0;
+                if (trailer)
+                    watch_trailer();
+                else
+                {
+                    viewer_index_ = media_focus_ - (detail_videos_.empty() ? 0 : 1);
+                    viewer_open_ = true;
+                    feedback.play(audio::Cue::open);
+                }
+            }
+            return;
+        }
+        if (detail_row_ != row_actions)
+            return;
+
         const auto buttons = detail_buttons(*g);
         if (input.nav == Direction::left && detail_focus_ > 0)
         {
@@ -1430,14 +1804,13 @@ class GameVault final : public app::Concept
             feedback.play(audio::Cue::focus);
         }
         detail_focus_ = std::min(detail_focus_, static_cast<int>(buttons.size()) - 1);
-        if (input.is_pressed(Action::north))
-            toggle_favourite(feedback);
-        if (input.is_pressed(Action::west) && g->platform == "PS5")
-            cycle_drive(feedback);
         if (!input.is_pressed(Action::confirm))
             return;
         switch (buttons[static_cast<std::size_t>(detail_focus_)])
         {
+        case DetailButton::trailer:
+            watch_trailer();
+            break;
         case DetailButton::favourite:
             toggle_favourite(feedback);
             break;
@@ -1482,11 +1855,11 @@ class GameVault final : public app::Concept
                     act("POST", "/api/downloads/" + st.job->id + "/resume", "", "Resuming");
                 break;
             case MainAction::downloads:
-                details_open_ = false;
+                close_details();
                 section_ = Section::downloads;
                 break;
             case MainAction::storage:
-                details_open_ = false;
+                close_details();
                 section_ = Section::storage;
                 break;
             default:
@@ -1510,37 +1883,105 @@ class GameVault final : public app::Concept
         feedback.play(audio::Cue::toggle);
     }
 
+    static std::string nice_date(const std::string &iso)
+    {
+        static const char *months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+        if (iso.size() < 10 || iso[4] != '-' || iso[7] != '-')
+            return iso;
+        const int m = std::atoi(iso.substr(5, 2).c_str());
+        const int d = std::atoi(iso.substr(8, 2).c_str());
+        if (m < 1 || m > 12 || d < 1)
+            return iso;
+        return std::to_string(d) + " " + months[m - 1] + " " + iso.substr(0, 4);
+    }
+
+    static std::string kind_name(const std::string &kind)
+    {
+        if (kind == "ps5-exfat")
+            return "PS5 exFAT image";
+        if (kind == "ps5-folder")
+            return "PS5 folder dump";
+        if (kind == "ps4-pkg")
+            return "PS4 package (.pkg)";
+        if (kind == "ps4-folder")
+            return "PS4 folder dump";
+        return kind;
+    }
+
+    std::string joined(const char *key) const
+    {
+        std::string out;
+        for (const gv::Json &x : detail_[key].items())
+            if (!x.str().empty())
+                out += (out.empty() ? "" : ", ") + clean(x.str());
+        return out;
+    }
+
+    void draw_info_panel(gfx::DrawList &list, const Rect &r, const char *title,
+                         const std::vector<std::pair<std::string, std::string>> &rows, bool focused) const
+    {
+        const ui::Fonts &f = context_.fonts;
+        list.bordered_rect(r, 18, kPanel.with_alpha(0.92f), focused ? 2.0f : 1.0f, focused ? kAccent2 : kLine);
+        ui::text(list, f.semibold, title, r.x + 32, r.y + 52, 26, kInk);
+        float y = r.y + 104;
+        for (const auto &row : rows)
+        {
+            if (row.second.empty())
+                continue;
+            ui::text(list, f.regular, row.first, r.x + 32, y, 20, kMuted);
+            ui::text(list, f.semibold, fit(f.semibold, row.second, 21, r.w - 280), r.x + 240, y, 21, kInk);
+            y += 44;
+            if (y > r.y + r.h - 16)
+                break;
+        }
+    }
+
     void draw_details(gfx::DrawList &list) const
     {
         const ui::Fonts &f = context_.fonts;
         const Game *g = game_by_id(detail_id_);
         if (!g)
             return;
+        const float sc = page_scroll_.value;
+        const Rect full{0, 0, 1920, 1080};
+
+        // Key art: the whole screen, cropped to fit (never stretched), shaded
+        // on the left and at the bottom so the text over it stays readable.
         if (detail_backdrop_)
         {
-            list.image_gradient(detail_backdrop_, {0, 0, 1920, 760}, gfx::kFullUv, kWhite.with_alpha(0.55f),
-                                kWhite.with_alpha(0.0f));
-            list.gradient_rect_h({0, 0, 1920, 760}, 0, kBg.with_alpha(0.95f), kBg.with_alpha(0.1f));
+            list.image(detail_backdrop_, full, fill_uv(detail_backdrop_w_, detail_backdrop_h_, full, 0.5f, 0.3f),
+                       kWhite.with_alpha(0.62f));
+            list.gradient_rect_h(full, 0, kBg.with_alpha(0.97f), kBg.with_alpha(0.2f));
+            list.gradient_rect({0, 420, 1920, 660}, 0, kBg.with_alpha(0.0f), kBg.with_alpha(0.98f));
+            list.rounded_rect(full, 0, kBg.with_alpha(std::min(0.55f, sc / 900.0f)));
         }
-        ui::text(list, f.regular, "Library  /  " + fit(f.regular, g->title, 22, 900), kMargin, 168, 22, kInk2);
+        // the header sits on a dark band, which the page scrolls under
+        list.rounded_rect({0, 0, 1920, 112}, 0, kBg.with_alpha(0.96f));
+        list.gradient_rect({0, 112, 1920, 70}, 0, kBg.with_alpha(0.96f), kBg.with_alpha(0.0f));
 
-        const Rect cover{kMargin, 210, 300, 450};
-        list.shadow(cover, 16, 40, Color::rgb(0, 0.5f));
+        list.push_clip({0, 118, 1920, 960 - 118});
+        const float top = -sc; // page y -> screen y
+
+        ui::text(list, f.regular, "Library  /  " + fit(f.regular, g->title, 22, 900), kMargin, 168 + top, 22, kInk2);
+
+        // Poster, cropped to its frame
+        const Rect cover{kMargin, 205 + top, 300, 450};
+        list.shadow(cover, 16, 40, Color::rgb(0, 0.55f));
         draw_cover(list, *g, cover, 16, 28);
 
         const float tx = cover.x + cover.w + 52;
         const float tw = 1920 - tx - kMargin;
-        float y = 240;
+        float y = 240 + top;
         const float pw = f.semibold.measure(g->platform, 17) + 24;
         list.rounded_rect({tx, y - 26, pw, 34}, 8, kBg.with_alpha(0.8f));
         ui::text(list, f.semibold, g->platform, tx + pw / 2, y - 3, 17, kInk, Align::center, 1.0f);
         std::string genres;
         for (const gv::Json &x : detail_["genres"].items())
-            genres += (genres.empty() ? "" : " · ") + x.str();
+            genres += (genres.empty() ? "" : " · ") + clean(x.str());
         if (!genres.empty())
         {
             const float gw = f.regular.measure(genres, 17) + 24;
-            list.rounded_rect({tx + pw + 10, y - 26, gw, 34}, 8, kWhite.with_alpha(0.12f));
+            list.rounded_rect({tx + pw + 10, y - 26, gw, 34}, 8, kWhite.with_alpha(0.14f));
             ui::text(list, f.regular, genres, tx + pw + 22, y - 3, 17, kInk2);
         }
         y += 74;
@@ -1556,13 +1997,15 @@ class GameVault final : public app::Concept
                 meta += (meta.empty() ? "" : " · ") + s;
         };
         add(detail_["year"].str());
-        add(detail_["developer"].str());
-        add(detail_["publisher"].str());
+        add(clean(detail_["developer"].str()));
+        if (detail_["publisher"].str() != detail_["developer"].str())
+            add(clean(detail_["publisher"].str()));
         if (!detail_["criticScore"].is_null())
             add("Critic score " + detail_["criticScore"].str());
         ui::text(list, f.regular, fit(f.regular, meta, 22, tw), tx, y, 22, kInk2);
-        y += 40;
-        const ui::ParagraphLines summary = ui::paragraph_lines(f.regular, detail_["summary"].str(), 21, std::min(tw, 1100.0f), 3);
+        y += 42;
+        const ui::ParagraphLines summary =
+            ui::paragraph_lines(f.regular, clean(detail_["summary"].str()), 21, std::min(tw, 1150.0f), 3);
         for (const std::string &line : summary.lines)
         {
             ui::text(list, f.regular, line, tx, y, 21, kInk2);
@@ -1573,12 +2016,12 @@ class GameVault final : public app::Concept
         const MainAction a = main_action(*g);
         const auto buttons = detail_buttons(*g);
         float bx = tx;
-        const float by = std::max(y + 18.0f, 560.0f);
+        const float by = std::max(y + 22.0f, 540.0f + top);
         for (std::size_t i = 0; i < buttons.size(); ++i)
         {
-            const bool focused = static_cast<int>(i) == detail_focus_;
+            const bool focused = detail_row_ == row_actions && static_cast<int>(i) == detail_focus_;
             std::string label;
-            Color fill = kWhite.with_alpha(0.12f), ink = kInk;
+            Color fill = kWhite.with_alpha(0.14f), ink = kInk;
             float w = 0;
             switch (buttons[i])
             {
@@ -1588,9 +2031,13 @@ class GameVault final : public app::Concept
                 ink = a.ink;
                 w = f.semibold.measure(label, 26) + 72;
                 break;
+            case DetailButton::trailer:
+                label = "Watch trailer";
+                w = f.semibold.measure(label, 24) + 88;
+                break;
             case DetailButton::favourite:
-                label = g->favourite ? "★ Favourite" : "☆ Favourite";
-                w = f.semibold.measure("☆ Favourite", 24) + 56;
+                label = "Favourite";
+                w = f.semibold.measure(label, 24) + 82;
                 break;
             case DetailButton::drive:
                 label = std::string("Save to: ") + drive_name(detail_drive());
@@ -1603,50 +2050,134 @@ class GameVault final : public app::Concept
             }
             const Rect r{bx, by, w, 76};
             if (focused)
+            {
                 list.rounded_rect({r.x - 6, r.y - 6, r.w + 12, r.h + 12}, 22, kWhite);
-            if (focused)
                 list.rounded_rect({r.x - 3, r.y - 3, r.w + 6, r.h + 6}, 19, kBg);
+            }
             list.rounded_rect(r, 16, fill);
             if (buttons[i] == DetailButton::favourite)
             {
                 list.star(r.x + 34, r.y + 38, 13, kWarn, g->favourite ? 0.0f : 2.5f);
-                ui::text(list, f.semibold, "Favourite", r.x + 58, r.y + 47, 24, ink);
+                ui::text(list, f.semibold, label, r.x + 58, r.y + 47, 24, ink);
+            }
+            else if (buttons[i] == DetailButton::trailer)
+            {
+                list.triangle({r.x + 28, r.y + 26, 24, 24}, ink, 0.0f, 1.5708f);
+                ui::text(list, f.semibold, label, r.x + 64, r.y + 47, 24, ink);
             }
             else
-                ui::text(list, f.semibold, label, r.x + r.w / 2, r.y + 48, buttons[i] == DetailButton::main ? 26 : 24, ink, Align::center);
+                ui::text(list, f.semibold, label, r.x + r.w / 2, r.y + 48, buttons[i] == DetailButton::main ? 26 : 24, ink,
+                         Align::center);
             bx += w + 18;
         }
         ui::text(list, f.regular, fit(f.regular, a.note, 21, tw), tx, by + 116, 21, a.note_color);
 
-        // Facts
-        const float fy = 740;
-        const float fw = (1920 - 2 * kMargin - 3 * 20) / 4;
+        // Trailer and screenshots
+        const int count = media_count();
+        if (count > 0)
+        {
+            const float my = kMediaTop + top;
+            ui::text(list, f.semibold, "Trailer and screenshots", kMargin, my, 28, kInk);
+            const std::string n = std::to_string(detail_shots_.size()) + (detail_shots_.size() == 1 ? " screenshot" : " screenshots") +
+                                  (detail_videos_.empty() ? "" : " · trailer");
+            ui::text(list, f.regular, n, 1920 - kMargin, my, 20, kMuted, Align::right);
+            list.push_clip({kMargin - 14, my + 10, 1920 - 2 * kMargin + 28, kThumbH + 40});
+            for (int i = 0; i < count; ++i)
+            {
+                const Rect r{kMargin + static_cast<float>(i) * (kThumbW + kThumbGap) - media_scroll_.value, my + 30, kThumbW, kThumbH};
+                if (r.x > 1920 || r.x + r.w < 0)
+                    continue;
+                const bool focused = detail_row_ == row_media && i == media_focus_;
+                if (focused)
+                {
+                    list.rounded_rect({r.x - 7, r.y - 7, r.w + 14, r.h + 14}, 18, kWhite);
+                    list.rounded_rect({r.x - 3, r.y - 3, r.w + 6, r.h + 6}, 15, kBg);
+                }
+                const bool trailer = !detail_videos_.empty() && i == 0;
+                const Shot *shot = trailer ? (detail_shots_.empty() ? nullptr : &detail_shots_[0])
+                                           : &detail_shots_[static_cast<std::size_t>(i - (detail_videos_.empty() ? 0 : 1))];
+                if (trailer && detail_backdrop_)
+                    list.image(detail_backdrop_, r, fill_uv(detail_backdrop_w_, detail_backdrop_h_, r), kWhite, 12);
+                else if (shot && shot->tex)
+                    list.image(shot->tex, r, fill_uv(shot->w, shot->h, r), kWhite, 12);
+                else
+                {
+                    list.rounded_rect(r, 12, Color::rgb(0x1A2230));
+                    if (!trailer)
+                        ui::text(list, f.regular, shot && shot->failed ? "Couldn't load" : "Loading", r.x + r.w / 2,
+                                 r.y + r.h / 2 + 8, 19, kMuted, Align::center);
+                }
+                if (trailer)
+                {
+                    list.gradient_rect(r, 12, Color::rgb(0, 0.15f), Color::rgb(0, 0.75f));
+                    list.circle(r.x + r.w / 2, r.y + r.h / 2 - 12, 38, kWhite.with_alpha(0.92f));
+                    list.triangle({r.x + r.w / 2 - 12, r.y + r.h / 2 - 30, 34, 36}, kBg, 0.0f, 1.5708f);
+                    ui::text(list, f.semibold, fit(f.semibold, detail_videos_.front().second, 20, r.w - 32), r.x + 16,
+                             r.y + r.h - 18, 20, kInk);
+                }
+            }
+            list.pop_clip();
+        }
+
+        // File and game information, as on the desktop page
+        const float iy = (count > 0 ? kInfoTop : kMediaTop) + top;
+        const float pw2 = (1920 - 2 * kMargin - 28) / 2;
         const GameStatus st = status_of(*g, state_);
         const std::string fw_need = detail_["requiredFirmware"].str(g->required_fw);
-        const bool incompatible = g->platform != "PS4" && !fw_need.empty() && !state_.firmware.empty() &&
-                                  fw_compare(fw_need, state_.firmware) > 0;
-        struct Fact
-        {
-            std::string label, value, sub;
-            Color color;
+        std::string on_ps5 = "No";
+        if (st.installed)
+            on_ps5 = std::string("Yes, ") + drive_name(st.installed->drive) +
+                     (st.installed->version.empty() ? "" : " · v" + st.installed->version);
+        const std::string files = detail_["fileCount"].is_null() ? "" : detail_["fileCount"].str();
+        const std::vector<std::pair<std::string, std::string>> file_rows = {
+            {"Format", kind_name(detail_["kind"].str(detail_files_["kind"].str()))},
+            {"Size", format_bytes(static_cast<double>(g->size))},
+            {"Files", files == "0" ? "" : files},
+            {"Title ID", g->title_id},
+            {"Version on NAS", g->version.empty() ? "" : "v" + g->version},
+            {"On this PS5", on_ps5},
+            {"Needs firmware", fw_need.empty() ? "" : fw_need + (state_.firmware.empty() ? "" : " (this PS5: " + state_.firmware + ")")},
         };
-        const Fact facts[4] = {
-            {"Download size", format_bytes(static_cast<double>(g->size)), "", kInk},
-            {"Saves to", g->platform == "PS4" ? "PS5 installer" : drive_name(detail_drive()),
-             g->platform == "PS4" ? "Console's install location" : format_bytes(free_on(detail_drive())) + " free", kInk},
-            {"Version on NAS", g->version.empty() ? "—" : "v" + g->version,
-             st.installed ? "On PS5: v" + (st.installed->version.empty() ? std::string("?") : st.installed->version) : "Not on this PS5", kInk},
-            {"Needs firmware", fw_need.empty() ? "—" : fw_need,
-             g->platform == "PS4" ? "PS4 system version" : "This PS5: " + state_.firmware, incompatible ? kBad : kInk},
+        std::string critic = detail_["criticScore"].is_null() ? "" : detail_["criticScore"].str() + " / 100";
+        std::string user = detail_["userScore"].is_null() ? "" : detail_["userScore"].str() + " / 100";
+        const std::vector<std::pair<std::string, std::string>> game_rows = {
+            {"Release date", nice_date(detail_["releaseDate"].str(g->release))},
+            {"Developer", clean(detail_["developer"].str())},
+            {"Publisher", clean(detail_["publisher"].str())},
+            {"Genres", joined("genres")},
+            {"Modes", joined("modes")},
+            {"Critic score", critic},
+            {"User rating", user},
         };
-        for (int i = 0; i < 4; ++i)
+        const bool info_focus = detail_row_ == row_info;
+        draw_info_panel(list, {kMargin, iy, pw2, 420}, "File information", file_rows, info_focus);
+        draw_info_panel(list, {kMargin + pw2 + 28, iy, pw2, 420}, "Game information", game_rows, info_focus);
+
+        list.pop_clip();
+    }
+
+    // A screenshot, full screen. Left / right (or L2 / R2) browse, ○ closes.
+    void draw_viewer(gfx::DrawList &list) const
+    {
+        const ui::Fonts &f = context_.fonts;
+        list.rounded_rect({0, 0, 1920, 1080}, 0, Color::rgb(0x05070A));
+        if (viewer_index_ < 0 || viewer_index_ >= static_cast<int>(detail_shots_.size()))
+            return;
+        const Shot &s = detail_shots_[static_cast<std::size_t>(viewer_index_)];
+        const Rect area{80, 50, 1760, 900};
+        if (s.tex && s.w > 0 && s.h > 0)
         {
-            const Rect r{kMargin + static_cast<float>(i) * (fw + 20), fy, fw, 130};
-            list.bordered_rect(r, 16, kPanel, 1, kLine);
-            ui::text(list, f.regular, facts[i].label, r.x + 24, r.y + 40, 19, kMuted);
-            ui::text(list, f.semibold, fit(f.semibold, facts[i].value, 30, r.w - 48), r.x + 24, r.y + 82, 30, facts[i].color);
-            ui::text(list, f.regular, fit(f.regular, facts[i].sub, 17, r.w - 48), r.x + 24, r.y + 110, 17, kMuted);
+            // fit the whole picture inside the area
+            const float scale = std::min(area.w / static_cast<float>(s.w), area.h / static_cast<float>(s.h));
+            const float w = static_cast<float>(s.w) * scale, h = static_cast<float>(s.h) * scale;
+            list.image(s.tex, {area.x + (area.w - w) / 2, area.y + (area.h - h) / 2, w, h}, gfx::kFullUv, kWhite, 10);
         }
+        else
+            ui::text(list, f.regular, s.failed ? "Couldn't load this screenshot" : "Loading", 960, 520, 26, kMuted, Align::center);
+        const std::string n = std::to_string(viewer_index_ + 1) + " / " + std::to_string(detail_shots_.size());
+        ui::text(list, f.semibold, n, 1920 - kMargin, 1018, 24, kInk2, Align::right);
+        const ui::Hint hints[] = {{ui::Button::dpad, "Browse"}, {ui::Button::circle, "Close"}};
+        ui::draw_hints(list, f, ui::GlyphStyle::dark(), hints, 2, kMargin, false);
     }
 
     // ---- downloads -------------------------------------------------------------------
@@ -2172,7 +2703,7 @@ class GameVault final : public app::Concept
 
         float x = 340;
         ui::draw_button(list, f, ui::GlyphStyle::dark(), ui::Button::l1, x, 66, 34);
-        x += 44;
+        x += ui::button_width(ui::Button::l1, 34) + 20;
         int active = 0;
         for (const Job &j : state_.jobs)
             if (active_state(j.state))
@@ -2193,7 +2724,7 @@ class GameVault final : public app::Concept
             }
             x += tw + 8;
         }
-        ui::draw_button(list, f, ui::GlyphStyle::dark(), ui::Button::r1, x + 10, 66, 34);
+        ui::draw_button(list, f, ui::GlyphStyle::dark(), ui::Button::r1, x + 12, 66, 34);
 
         // Connection status, top right
         Color dot = kGood;
@@ -2222,69 +2753,74 @@ class GameVault final : public app::Concept
         ui::text(list, f.regular, text, 1920 - kMargin, 74, 21, kInk2, Align::right);
     }
 
-    void draw_side_panel(gfx::DrawList &list) const
+    // The footer's right side: free space on each drive, and what's downloading.
+    // (It was a panel beside the library; down here the grid gets two more columns.)
+    void draw_status_strip(gfx::DrawList &list) const
     {
         const ui::Fonts &f = context_.fonts;
-        float y = 132;
-        const float h = 74.0f + 92.0f * static_cast<float>(state_.drives.size());
-        Rect p{kSideX, y, kSideW, h};
-        list.bordered_rect(p, 18, kPanel, 1, kLine);
-        ui::text(list, f.semibold, "Console storage", p.x + 24, p.y + 44, 22, kInk);
-        float dy = p.y + 86;
-        for (const Drive &d : state_.drives)
-        {
-            ui::text(list, f.regular, d.label, p.x + 24, dy, 19, kInk);
-            ui::text(list, f.semibold, format_bytes(d.free) + " free", p.x + p.w - 24, dy, 19, kInk, Align::right);
-            draw_progress(list, {p.x + 24, dy + 14, p.w - 48, 10}, d.total > 0 ? (d.total - d.free) / d.total : 0,
-                          d.id == "internal" ? kAccent : kAccent2);
-            ui::text(list, f.regular, format_bytes(d.total - d.free) + " of " + format_bytes(d.total) + " used", p.x + 24, dy + 48, 16, kMuted);
-            dy += 92;
-        }
-        y += h + 18;
+        constexpr float cy = 1010.0f;
+        float x = 1920 - kMargin;
+
+        // Downloads, rightmost
         const Job *current = nullptr;
-        int queued = 0;
-        double queued_bytes = 0;
+        int waiting = 0;
         for (const Job &j : state_.jobs)
         {
             if (!active_state(j.state))
                 continue;
-            if (!current && (j.state == "downloading" || j.state == "verifying"))
+            if (!current || (current->state != "downloading" && j.state == "downloading"))
                 current = &j;
-            else
-            {
-                ++queued;
-                queued_bytes += j.total - j.done;
-            }
+            ++waiting;
         }
-        if (!current)
-            for (const Job &j : state_.jobs)
-                if (active_state(j.state))
-                {
-                    current = &j;
-                    --queued;
-                    queued_bytes -= j.total - j.done;
-                    break;
-                }
-        p = {kSideX, y, kSideW, current ? 196.0f : 132.0f};
-        list.bordered_rect(p, 18, kPanel, 1, kLine);
-        ui::text(list, f.semibold, current ? "Downloading" : "Downloads", p.x + 24, p.y + 44, 22, kInk);
         if (current)
         {
+            --waiting;
             const double frac = current->total > 0 ? current->done / current->total : 0;
-            ui::text(list, f.regular, fit(f.regular, current->title, 19, p.w - 110), p.x + 24, p.y + 82, 19, kInk);
-            ui::text(list, f.semibold, std::to_string(static_cast<int>(frac * 100)) + "%", p.x + p.w - 24, p.y + 82, 19, kInk, Align::right);
-            draw_progress(list, {p.x + 24, p.y + 96, p.w - 48, 10}, frac, kAccent);
-            std::string line = current->state == "paused" ? "Paused" : current->state == "queued" ? "Waiting"
-                               : current->state == "verifying" ? "Checking the file..."
-                                                               : format_bytes(current->speed) + "/s · " + format_eta(current->total - current->done, current->speed);
-            ui::text(list, f.regular, fit(f.regular, line, 17, p.w - 48), p.x + 24, p.y + 136, 17, kMuted);
-            if (queued > 0)
-                ui::text(list, f.regular, std::to_string(queued) + " more queued · " + format_bytes(queued_bytes), p.x + 24, p.y + 166, 17, kMuted);
+            std::string line = current->state == "paused"      ? "Paused"
+                               : current->state == "queued"    ? "Waiting"
+                               : current->state == "verifying" ? "Checking"
+                                                               : format_bytes(current->speed) + "/s";
+            if (waiting > 0)
+                line += " · " + std::to_string(waiting) + " more";
+            x -= f.regular.measure(line, 19);
+            ui::text(list, f.regular, line, x, cy + 7, 19, kMuted);
+            x -= 16 + 110;
+            draw_progress(list, {x, cy - 4, 110, 8}, frac, kAccent);
+            const std::string title = fit(f.semibold, current->title, 20, 300) + " " +
+                                      std::to_string(static_cast<int>(frac * 100)) + "%";
+            x -= 14 + f.semibold.measure(title, 20);
+            ui::text(list, f.semibold, title, x, cy + 7, 20, kInk);
+            // a small arrow, moving while it downloads
+            const float bob = current->state == "downloading" ? std::sin(clock_ * 5.0f) * 2.0f : 0.0f;
+            x -= 26;
+            list.line(x + 9, cy - 10 + bob, x + 9, cy + 6 + bob, 3, kAccent);
+            list.line(x + 2, cy + bob, x + 9, cy + 7 + bob, 3, kAccent);
+            list.line(x + 16, cy + bob, x + 9, cy + 7 + bob, 3, kAccent);
         }
         else
         {
-            ui::text(list, f.regular, "Nothing downloading", p.x + 24, p.y + 80, 19, kInk2);
-            ui::text(list, f.regular, "Downloads keep going while you play.", p.x + 24, p.y + 108, 17, kMuted);
+            const char *idle = "Nothing downloading";
+            x -= f.regular.measure(idle, 19);
+            ui::text(list, f.regular, idle, x, cy + 7, 19, kMuted);
+        }
+
+        // Drives, to the left of it
+        for (auto it = state_.drives.rbegin(); it != state_.drives.rend(); ++it)
+        {
+            const Drive &d = *it;
+            x -= 28;
+            list.rounded_rect({x, cy - 16, 2, 32}, 1, kLine);
+            x -= 28;
+            const std::string free = format_bytes(d.free) + " free";
+            x -= f.semibold.measure(free, 19);
+            ui::text(list, f.semibold, free, x, cy + 7, 19, kInk);
+            x -= 12 + 90;
+            draw_progress(list, {x, cy - 4, 90, 8}, d.total > 0 ? (d.total - d.free) / d.total : 0,
+                          d.id == "internal" ? kAccent : kAccent2);
+            x -= 12 + f.regular.measure(d.label, 19);
+            ui::text(list, f.regular, d.label, x, cy + 7, 19, kInk2);
+            if (x < 1060) // keep clear of the button hints
+                break;
         }
     }
 
@@ -2294,16 +2830,23 @@ class GameVault final : public app::Concept
         std::vector<ui::Hint> hints;
         if (details_open_)
         {
-            hints = {{ui::Button::cross, "Select"}, {ui::Button::triangle, "Favourite"}, {ui::Button::circle, "Back"}};
+            const bool trailer = detail_row_ == row_media && !detail_videos_.empty() && media_focus_ == 0;
+            if (detail_row_ == row_media)
+                hints = {{ui::Button::cross, trailer ? "Watch trailer" : "View"}, {ui::Button::dpad, "Browse"}};
+            else if (detail_row_ == row_actions)
+                hints = {{ui::Button::cross, "Select"}};
+            hints.push_back({ui::Button::triangle, "Favourite"});
             const Game *g = game_by_id(detail_id_);
             if (g && g->platform == "PS5" && state_.drives.size() > 1)
-                hints.insert(hints.begin() + 1, {ui::Button::square, "Change drive"});
+                hints.push_back({ui::Button::square, "Change drive"});
+            hints.push_back({ui::Button::l2, "More", ui::Button::r2});
+            hints.push_back({ui::Button::circle, "Back"});
         }
         else
             switch (section_)
             {
             case Section::library:
-                hints = {{ui::Button::cross, "Open"}, {ui::Button::triangle, "Favourite"}, {ui::Button::square, "Filter"},
+                hints = {{ui::Button::cross, "Open"}, {ui::Button::triangle, "Favourite"}, {ui::Button::l2, "Filter", ui::Button::r2},
                          {ui::Button::options, "Sort"}};
                 break;
             case Section::downloads:
@@ -2365,6 +2908,9 @@ class GameVault final : public app::Concept
 
     float age_ = 0.0f;
     float clock_ = 0.0f;
+    bool splash_on_ = true;
+    float splash_age_ = 0.0f;
+    float splash_out_ = 0.0f;
     float section_age_ = 0.0f;
     Section section_ = Section::library;
 
@@ -2395,6 +2941,15 @@ class GameVault final : public app::Concept
     gv::Json detail_files_;
     std::string detail_drive_;
     std::uint32_t detail_backdrop_ = 0;
+    int detail_backdrop_w_ = 0, detail_backdrop_h_ = 0;
+    std::vector<Shot> detail_shots_;
+    std::vector<std::pair<std::string, std::string>> detail_videos_; // YouTube id, name
+    int detail_row_ = 0;
+    int media_focus_ = 0;
+    tween::Spring page_scroll_;
+    tween::Spring media_scroll_;
+    bool viewer_open_ = false;
+    int viewer_index_ = 0;
 
     int list_focus_ = 0;  // downloads
     int list_focus2_ = 0; // storage
