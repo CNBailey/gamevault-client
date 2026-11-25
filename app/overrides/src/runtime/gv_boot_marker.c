@@ -21,5 +21,6 @@ void gv_boot_mark(const char *line)
 
 __attribute__((constructor(101))) static void gv_boot_first(void)
 {
+    unlink("/data/gamevault/boot.txt"); /* one launch per file */
     gv_boot_mark("boot: process started (constructor)");
 }

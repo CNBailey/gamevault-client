@@ -7,6 +7,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <dirent.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <zlib.h>
@@ -178,6 +180,27 @@ static int install_pack(void) {
   return rc;
 }
 
+/* The PS5 only starts an app whose files and folders every user can open
+   (NASBridge's installer notes the same), so the whole app folder gets 0777.
+   Files written with fopen get 0666 less the umask, which the console
+   refuses: the tile then fails with WV-109145-0 before the app runs. */
+static void open_to_all(const char *path) {
+  struct stat st;
+  if (lstat(path, &st)) return;
+  chmod(path, 0777);
+  if (!S_ISDIR(st.st_mode)) return;
+  DIR *d = opendir(path);
+  if (!d) return;
+  struct dirent *e;
+  while ((e = readdir(d))) {
+    if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+    char child[1024];
+    snprintf(child, sizeof child, "%s/%s", path, e->d_name);
+    open_to_all(child);
+  }
+  closedir(d);
+}
+
 static void install_folder(void) {
   char marker[700], eboot[700], old_pic[700];
   real_path("/.gv-app-id", marker, sizeof marker);
@@ -196,6 +219,11 @@ static void install_folder(void) {
       real_path("/sce_sys/pic0.png", old_pic, sizeof old_pic);  /* left by the old tile */
       unlink(old_pic);
     }
+  }
+  if (ok) {
+    char dir[700];
+    real_path("", dir, sizeof dir);
+    open_to_all(dir);  /* every start, so folders from 0.3.4 and earlier are fixed too */
   }
   pthread_mutex_lock(&lock);
   installed = ok;
@@ -276,6 +304,7 @@ static void check(void) {
     return;
   }
   if (rename(part, final)) { unlink(part); return; }
+  chmod(final, 0777);
   write_file_atomic(ver, latest, strlen(latest));
   read_elf_version();
   log_msg("saved GameVault %s next to the home-screen tile", latest);

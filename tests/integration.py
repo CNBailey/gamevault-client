@@ -313,6 +313,8 @@ try:
         if os.path.exists(os.path.join(tile, 'sce_sys/param.json')):
             break
         time.sleep(0.1)
+    check('tile files open to every user (the PS5 refuses others)', all(
+        (os.stat(os.path.join(tile, f)).st_mode & 0o777) == 0o777 for f in ('', 'eboot.bin', 'sce_sys', 'sce_sys/param.json')))
     check('tile folder written', all(os.path.exists(os.path.join(tile, f)) for f in ('eboot.bin', 'sce_sys/param.json', 'sce_sys/icon0.png')))
     call('POST', '/api/rescan', {})
     state = call('GET', '/api/state')[1]
