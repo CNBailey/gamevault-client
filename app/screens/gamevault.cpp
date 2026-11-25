@@ -678,7 +678,7 @@ class GameVault final : public app::Concept
             {1.5f, 0, Direction::none, "library"},
             {0.4f, 0, Direction::right},
             {0.6f, action_bit(Action::confirm), Direction::none, nullptr},
-            {2.0f, 0, Direction::none, "details"},
+            {7.0f, 0, Direction::none, "details"},
             {0.4f, 0, Direction::down},
             {1.2f, 0, Direction::none, "details_media"},
             {0.4f, 0, Direction::right},
@@ -2850,7 +2850,8 @@ class GameVault final : public app::Concept
             ui::text(list, f.regular, line, x, cy + 7, 19, kMuted);
             x -= 16 + 110;
             draw_progress(list, {x, cy - 4, 110, 8}, frac, kAccent);
-            const std::string title = fit(f.semibold, current->title, 20, 300) + " " +
+            const float room = std::max(60.0f, std::min(300.0f, x - 14 - 26 - (hints_end_ + 48)));
+            const std::string title = fit(f.semibold, current->title, 20, room) + " " +
                                       std::to_string(static_cast<int>(frac * 100)) + "%";
             x -= 14 + f.semibold.measure(title, 20);
             ui::text(list, f.semibold, title, x, cy + 7, 20, kInk);
@@ -2869,13 +2870,17 @@ class GameVault final : public app::Concept
         }
 
         // Drives, to the left of it
-        for (auto it = state_.drives.rbegin(); it != state_.drives.rend(); ++it)
+        // the internal SSD first (nearest the downloads), so it's the one kept when space is short
+        for (auto it = state_.drives.begin(); it != state_.drives.end(); ++it)
         {
             const Drive &d = *it;
+            const std::string free = format_bytes(d.free) + " free";
+            const float need = 56 + f.semibold.measure(free, 19) + 12 + 90 + 12 + f.regular.measure(d.label, 19);
+            if (x - need < hints_end_ + 48) // no room left of the downloads: leave the rest out
+                break;
             x -= 28;
             list.rounded_rect({x, cy - 16, 2, 32}, 1, kLine);
             x -= 28;
-            const std::string free = format_bytes(d.free) + " free";
             x -= f.semibold.measure(free, 19);
             ui::text(list, f.semibold, free, x, cy + 7, 19, kInk);
             x -= 12 + 90;
@@ -2883,8 +2888,6 @@ class GameVault final : public app::Concept
                           d.id == "internal" ? kAccent : kAccent2);
             x -= 12 + f.regular.measure(d.label, 19);
             ui::text(list, f.regular, d.label, x, cy + 7, 19, kInk2);
-            if (x < 1060) // keep clear of the button hints
-                break;
         }
     }
 
@@ -2925,7 +2928,7 @@ class GameVault final : public app::Concept
             }
         if (!details_open_)
             hints.push_back({ui::Button::l1, "Section", ui::Button::r1});
-        ui::draw_hints(list, f, ui::GlyphStyle::dark(), hints.data(), static_cast<int>(hints.size()), kMargin, false);
+        hints_end_ = kMargin + ui::draw_hints(list, f, ui::GlyphStyle::dark(), hints.data(), static_cast<int>(hints.size()), kMargin, false);
     }
 
     void draw_toast(gfx::DrawList &list) const
@@ -2971,6 +2974,7 @@ class GameVault final : public app::Concept
 
     float age_ = 0.0f;
     float clock_ = 0.0f;
+    mutable float hints_end_ = 900.0f; // where the button hints end; the status strip stays right of it
     bool splash_on_ = true;
     float splash_age_ = 0.0f;
     float splash_out_ = 0.0f;

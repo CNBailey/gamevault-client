@@ -6,9 +6,35 @@ The PS5 side of [GameVault](https://github.com/CNBailey/gamevault-server). It is
 - **Game page**: the Download button turns into *Downloaded* when the game is on the PS5, *Update* when the NAS has a newer version, *Too large* when the drive hasn't enough space, or *Needs firmware X* when the game needs newer firmware than the console has.
 - **Downloads**: run in the background while you play, with several connections at once. They can be paused, resumed (also after a restart) and reordered.
 - **Storage**: the free space on each drive and the games on it, which you can delete.
-- **Settings**: the GameVault address, where PS5 games are saved (internal SSD or an external drive), the speed limit while a game is running, and a controller test.
+- **Settings**: the GameVault address, where PS5 games are saved (internal SSD or an external drive), where PS4 games go (installed on the PS5, or saved as `.pkg` files to a USB drive), the speed limit while a game is running, and a controller test.
 
 The same interface also works from a phone or PC at `http://<PS5 address>:8687`.
+
+## Screenshots
+
+<sub>Made-up games with generated artwork, for illustration. Captured from the PC build of the app.</sub>
+
+### The home-screen app on the TV
+
+**Library**: ✓ already on this PS5, ↑ newer version on the NAS, % downloading. Console storage and the current download are in the footer.
+
+![Library on the PS5](docs/screenshots/console-library.webp)
+
+**Game page**: Download, Update or Downloaded, depending on what's on the console. Screenshots open full screen; file and game information are further down.
+
+![Game page on the PS5](docs/screenshots/console-details.webp)
+
+| Screenshots and information | Downloads |
+|---|---|
+| ![Game page, scrolled down](docs/screenshots/console-details_info.webp) | ![Downloads on the PS5](docs/screenshots/console-downloads.webp) |
+| **Storage** | **Settings** |
+| ![Storage on the PS5](docs/screenshots/console-storage.webp) | ![Settings on the PS5](docs/screenshots/console-settings.webp) |
+
+### From a phone or PC (`http://<PS5 address>:8687`)
+
+| Library | Game page | Phone |
+|---|---|---|
+| ![Library in a browser](docs/screenshots/web-library.webp) | ![Game page in a browser](docs/screenshots/web-details.webp) | ![Library on a phone](docs/screenshots/web-phone.webp) |
 
 ## Installing
 
