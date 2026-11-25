@@ -1343,7 +1343,6 @@ class GameVault final : public app::Concept
         enum Kind
         {
             main,
-            trailer,
             favourite,
             remove,
             drive,
@@ -1369,7 +1368,7 @@ class GameVault final : public app::Concept
     };
 
     // Page layout, in page coordinates (the page scrolls under the header).
-    static constexpr float kMediaTop = 770.0f;  // "Trailer and screenshots" heading
+    static constexpr float kMediaTop = 770.0f;  // "Screenshots" heading
     static constexpr float kThumbW = 400.0f;
     static constexpr float kThumbH = 225.0f;
     static constexpr float kThumbGap = 22.0f;
@@ -1383,7 +1382,6 @@ class GameVault final : public app::Concept
         for (Shot &s : detail_shots_)
             gv::delete_texture(s.tex);
         detail_shots_.clear();
-        detail_videos_.clear();
     }
 
     void open_details(const Game &g)
@@ -1418,9 +1416,6 @@ class GameVault final : public app::Concept
                     detail_ = j;
                 if (fok)
                     detail_files_ = fj;
-                for (const gv::Json &v : detail_["videos"].items())
-                    if (!v["id"].str().empty())
-                        detail_videos_.push_back({v["id"].str(), clean(v["name"].str("Trailer"))});
                 for (const gv::Json &x : detail_["screenshots"].items())
                 {
                     const std::string url = media(x.str());
@@ -1487,10 +1482,9 @@ class GameVault final : public app::Concept
         clear_detail_media();
     }
 
-    // Trailer first (when the game has one), then the screenshots.
     int media_count() const
     {
-        return (detail_videos_.empty() ? 0 : 1) + static_cast<int>(detail_shots_.size());
+        return static_cast<int>(detail_shots_.size());
     }
 
     bool has_row(int row) const
@@ -1509,29 +1503,6 @@ class GameVault final : public app::Concept
         default:
             return 0.0f;
         }
-    }
-
-    void watch_trailer()
-    {
-        if (detail_videos_.empty())
-            return;
-        const auto &v = detail_videos_.front();
-        const std::string url = "https://www.youtube.com/watch?v=" + v.first;
-        ask("Watch \"" + v.second + "\" in the PS5's web browser? GameVault closes while you watch: open it again from the home screen.",
-            [this, url] {
-                api_.run([this, url] {
-                    gv::HttpResult r = gv::http("POST", std::string(kService) + "/api/open", "{\"url\":" + gv::json_quote(url) + "}", 5);
-                    api_.post([this, r] {
-                        if (!r.ok())
-                        {
-                            toast("Couldn't open the trailer: " + (r.error.empty() ? std::string("GameVault didn't answer") : r.error), true);
-                            return;
-                        }
-                        sys::log("[GV] closing for the trailer");
-                        sys::quit();
-                    });
-                });
-            });
     }
 
     std::string detail_drive() const
@@ -1679,10 +1650,7 @@ class GameVault final : public app::Concept
 
     std::vector<DetailButton::Kind> detail_buttons(const Game &g) const
     {
-        std::vector<DetailButton::Kind> b{DetailButton::main};
-        if (!detail_videos_.empty())
-            b.push_back(DetailButton::trailer);
-        b.push_back(DetailButton::favourite);
+        std::vector<DetailButton::Kind> b{DetailButton::main, DetailButton::favourite};
         const GameStatus st = status_of(g, state_);
         if (g.platform == "PS5" && state_.drives.size() > 1 && st.status != Status::downloaded)
             b.push_back(DetailButton::drive);
@@ -1775,15 +1743,9 @@ class GameVault final : public app::Concept
                 media_scroll_.target = x + kThumbW - view;
             if (input.is_pressed(Action::confirm))
             {
-                const bool trailer = !detail_videos_.empty() && media_focus_ == 0;
-                if (trailer)
-                    watch_trailer();
-                else
-                {
-                    viewer_index_ = media_focus_ - (detail_videos_.empty() ? 0 : 1);
-                    viewer_open_ = true;
-                    feedback.play(audio::Cue::open);
-                }
+                viewer_index_ = media_focus_;
+                viewer_open_ = true;
+                feedback.play(audio::Cue::open);
             }
             return;
         }
@@ -1808,9 +1770,6 @@ class GameVault final : public app::Concept
             return;
         switch (buttons[static_cast<std::size_t>(detail_focus_)])
         {
-        case DetailButton::trailer:
-            watch_trailer();
-            break;
         case DetailButton::favourite:
             toggle_favourite(feedback);
             break;
@@ -1848,6 +1807,16 @@ class GameVault final : public app::Concept
             case MainAction::update:
                 if (st.installed && st.installed->kind != "ps4-app")
                     body += ",\"replace\":" + gv::json_quote(st.installed->path);
+                if (g->platform == "PS4")
+                {
+                    // The base game is already on the PS5: send the patches only.
+                    std::string files;
+                    for (const gv::Json &x : detail_files_["files"].items())
+                        if (x["category"].str() == "gp")
+                            files += (files.empty() ? "" : ",") + gv::json_quote(x["path"].str());
+                    if (!files.empty())
+                        body += ",\"files\":[" + files + "]";
+                }
                 act("POST", "/api/downloads", body + "}", "Updating " + g->title);
                 break;
             case MainAction::resume:
@@ -2031,10 +2000,6 @@ class GameVault final : public app::Concept
                 ink = a.ink;
                 w = f.semibold.measure(label, 26) + 72;
                 break;
-            case DetailButton::trailer:
-                label = "Watch trailer";
-                w = f.semibold.measure(label, 24) + 88;
-                break;
             case DetailButton::favourite:
                 label = "Favourite";
                 w = f.semibold.measure(label, 24) + 82;
@@ -2060,11 +2025,6 @@ class GameVault final : public app::Concept
                 list.star(r.x + 34, r.y + 38, 13, kWarn, g->favourite ? 0.0f : 2.5f);
                 ui::text(list, f.semibold, label, r.x + 58, r.y + 47, 24, ink);
             }
-            else if (buttons[i] == DetailButton::trailer)
-            {
-                list.triangle({r.x + 28, r.y + 26, 24, 24}, ink, 0.0f, 1.5708f);
-                ui::text(list, f.semibold, label, r.x + 64, r.y + 47, 24, ink);
-            }
             else
                 ui::text(list, f.semibold, label, r.x + r.w / 2, r.y + 48, buttons[i] == DetailButton::main ? 26 : 24, ink,
                          Align::center);
@@ -2077,9 +2037,8 @@ class GameVault final : public app::Concept
         if (count > 0)
         {
             const float my = kMediaTop + top;
-            ui::text(list, f.semibold, "Trailer and screenshots", kMargin, my, 28, kInk);
-            const std::string n = std::to_string(detail_shots_.size()) + (detail_shots_.size() == 1 ? " screenshot" : " screenshots") +
-                                  (detail_videos_.empty() ? "" : " · trailer");
+            ui::text(list, f.semibold, "Screenshots", kMargin, my, 28, kInk);
+            const std::string n = std::to_string(detail_shots_.size()) + (detail_shots_.size() == 1 ? " picture" : " pictures");
             ui::text(list, f.regular, n, 1920 - kMargin, my, 20, kMuted, Align::right);
             list.push_clip({kMargin - 14, my + 10, 1920 - 2 * kMargin + 28, kThumbH + 40});
             for (int i = 0; i < count; ++i)
@@ -2093,27 +2052,14 @@ class GameVault final : public app::Concept
                     list.rounded_rect({r.x - 7, r.y - 7, r.w + 14, r.h + 14}, 18, kWhite);
                     list.rounded_rect({r.x - 3, r.y - 3, r.w + 6, r.h + 6}, 15, kBg);
                 }
-                const bool trailer = !detail_videos_.empty() && i == 0;
-                const Shot *shot = trailer ? (detail_shots_.empty() ? nullptr : &detail_shots_[0])
-                                           : &detail_shots_[static_cast<std::size_t>(i - (detail_videos_.empty() ? 0 : 1))];
-                if (trailer && detail_backdrop_)
-                    list.image(detail_backdrop_, r, fill_uv(detail_backdrop_w_, detail_backdrop_h_, r), kWhite, 12);
-                else if (shot && shot->tex)
+                const Shot *shot = &detail_shots_[static_cast<std::size_t>(i)];
+                if (shot->tex)
                     list.image(shot->tex, r, fill_uv(shot->w, shot->h, r), kWhite, 12);
                 else
                 {
                     list.rounded_rect(r, 12, Color::rgb(0x1A2230));
-                    if (!trailer)
-                        ui::text(list, f.regular, shot && shot->failed ? "Couldn't load" : "Loading", r.x + r.w / 2,
-                                 r.y + r.h / 2 + 8, 19, kMuted, Align::center);
-                }
-                if (trailer)
-                {
-                    list.gradient_rect(r, 12, Color::rgb(0, 0.15f), Color::rgb(0, 0.75f));
-                    list.circle(r.x + r.w / 2, r.y + r.h / 2 - 12, 38, kWhite.with_alpha(0.92f));
-                    list.triangle({r.x + r.w / 2 - 12, r.y + r.h / 2 - 30, 34, 36}, kBg, 0.0f, 1.5708f);
-                    ui::text(list, f.semibold, fit(f.semibold, detail_videos_.front().second, 20, r.w - 32), r.x + 16,
-                             r.y + r.h - 18, 20, kInk);
+                    ui::text(list, f.regular, shot->failed ? "Couldn't load" : "Loading", r.x + r.w / 2,
+                             r.y + r.h / 2 + 8, 19, kMuted, Align::center);
                 }
             }
             list.pop_clip();
@@ -2830,9 +2776,8 @@ class GameVault final : public app::Concept
         std::vector<ui::Hint> hints;
         if (details_open_)
         {
-            const bool trailer = detail_row_ == row_media && !detail_videos_.empty() && media_focus_ == 0;
             if (detail_row_ == row_media)
-                hints = {{ui::Button::cross, trailer ? "Watch trailer" : "View"}, {ui::Button::dpad, "Browse"}};
+                hints = {{ui::Button::cross, "View"}, {ui::Button::dpad, "Browse"}};
             else if (detail_row_ == row_actions)
                 hints = {{ui::Button::cross, "Select"}};
             hints.push_back({ui::Button::triangle, "Favourite"});
@@ -2943,7 +2888,6 @@ class GameVault final : public app::Concept
     std::uint32_t detail_backdrop_ = 0;
     int detail_backdrop_w_ = 0, detail_backdrop_h_ = 0;
     std::vector<Shot> detail_shots_;
-    std::vector<std::pair<std::string, std::string>> detail_videos_; // YouTube id, name
     int detail_row_ = 0;
     int media_focus_ = 0;
     tween::Spring page_scroll_;

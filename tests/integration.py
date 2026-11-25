@@ -75,7 +75,8 @@ GAMES = {
             {'path': 'sce_sys/param.json', 'size': os.path.getsize(os.path.join(FILES, 'folder/sce_sys/param.json')), 'disk': 'folder/sce_sys/param.json'},
             {'path': 'eboot.bin', 'size': os.path.getsize(os.path.join(FILES, 'folder/eboot.bin')), 'disk': 'folder/eboot.bin'}]}},
     3: {'game': {'id': 3, 'title': 'Hades', 'platform': 'PS4', 'titleId': 'CUSA00002', 'version': '01.10', 'contentId': 'EP9000-CUSA00002_00-0000000000000000', 'path': '/games/PS4/Hades'},
-        'files': {'kind': 'ps4-pkg', 'files': [{'path': 'Hades.pkg', 'size': 1024, 'category': 'gd', 'disk': 'game.pkg'}]}},
+        'files': {'kind': 'ps4-pkg', 'files': [{'path': 'Hades.pkg', 'size': 1024, 'category': 'gd', 'disk': 'game.pkg'},
+                                               {'path': 'Hades patch.pkg', 'size': 1024, 'category': 'gp', 'disk': 'game.pkg'}]}},
     4: {'game': {'id': 4, 'title': 'Evil', 'platform': 'PS5', 'titleId': 'PPSA66666', 'version': '1', 'path': '/games/PS5/Evil'},
         'files': {'kind': 'ps5-folder', 'files': [{'path': '../../escape.txt', 'size': 10, 'disk': 'game.pkg'}]}},
     5: {'game': {'id': 5, 'title': 'Broken', 'platform': 'PS5', 'titleId': 'PPSA77777', 'version': '1', 'path': '/games/PS5/x'},
@@ -279,6 +280,14 @@ try:
     jid = call('POST', '/api/downloads', {'gameId': 3})[1]['id']
     j = wait(jid, ['done', 'failed'])
     check('PS4 sent to installer', j['state'] == 'done' and os.path.isdir(os.path.join(ROOT, 'user/app/CUSA00002')))
+    log = open(os.path.join(WORK, 'log.txt')).read()
+    check('PS4 base game then patch', log.find('/Hades.pkg') != -1 and log.find('/Hades%20patch.pkg') > log.find('/Hades.pkg'), log[-600:])
+    # An update sends only the patch (the app lists it in "files").
+    mark = len(log)
+    jid = call('POST', '/api/downloads', {'gameId': 3, 'files': ['Hades patch.pkg']})[1]['id']
+    j = wait(jid, ['done', 'failed'])
+    log = open(os.path.join(WORK, 'log.txt')).read()[mark:]
+    check('PS4 update sends the patch only', j['state'] == 'done' and '/Hades%20patch.pkg' in log and '/Hades.pkg' not in log, log)
 
     # Safety: a path escaping the game folder, and deleting outside the scan.
     s, r = call('POST', '/api/downloads', {'gameId': 4})
