@@ -3,6 +3,7 @@
 #include <ctype.h>
 #include <dirent.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -266,6 +267,64 @@ static void scan_ps4_apps(installed_t *list, int *n, const char *user_root, cons
   closedir(d);
 }
 
+static uint32_t be32(const unsigned char *p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
+
+/* PS4 .pkg files saved to a USB drive's top folder ("PS4 games: save to" a USB drive).
+   They aren't installed, but the game is on the drive: title ID from the header's
+   content ID, version and title from the param.sfo entry. Add-ons (category ac) are
+   left out, so they don't stand in for the game. */
+static void scan_usb_pkgs(installed_t *list, int *n, const drive_t *drive) {
+  char real[700];
+  platform_path(drive->root, real, sizeof real);
+  DIR *d = opendir(real);
+  if (!d) return;
+  struct dirent *e;
+  while ((e = readdir(d))) {
+    size_t nl = strlen(e->d_name);
+    if (nl < 5 || e->d_name[0] == '.' || strcasecmp(e->d_name + nl - 4, ".pkg")) continue;
+    char p[900];
+    snprintf(p, sizeof p, "%s/%s", real, e->d_name);
+    FILE *f = fopen(p, "rb");
+    if (!f) continue;
+    unsigned char h[0x80];
+    installed_t it;
+    memset(&it, 0, sizeof it);
+    char category[8] = "";
+    if (fread(h, 1, sizeof h, f) == sizeof h && be32(h) == 0x7F434E54) {
+      /* content ID: EP9000-CUSA00002_00-..., title ID at 7 */
+      if (!memcmp(h + 0x47, "CUSA", 4)) {
+        memcpy(it.title_id, h + 0x47, 9);
+        it.title_id[9] = 0;
+      }
+      uint32_t count = be32(h + 0x10), table = be32(h + 0x18);
+      for (uint32_t i = 0; i < count && i < 4096; i++) {
+        unsigned char ent[32];
+        if (fseek(f, (long)table + (long)i * 32, SEEK_SET) || fread(ent, 1, 32, f) != 32) break;
+        if (be32(ent) != 0x1000) continue; /* param.sfo */
+        uint32_t off = be32(ent + 16), len = be32(ent + 20);
+        if (len < 20 || len > 65536) break;
+        char *sfo = malloc(len);
+        if (sfo && !fseek(f, (long)off, SEEK_SET) && fread(sfo, 1, len, f) == len) {
+          sfo_value(sfo, len, "APP_VER", it.version, sizeof it.version);
+          sfo_value(sfo, len, "TITLE", it.title, sizeof it.title);
+          sfo_value(sfo, len, "CATEGORY", category, sizeof category);
+        }
+        free(sfo);
+        break;
+      }
+    }
+    fclose(f);
+    if (!it.title_id[0] || !strcmp(category, "ac")) continue;
+    snprintf(it.kind, sizeof it.kind, "ps4-pkg");
+    snprintf(it.drive, sizeof it.drive, "%s", drive->id);
+    snprintf(it.path, sizeof it.path, "%s/%s", drive->root, e->d_name);
+    if (!it.title[0]) snprintf(it.title, sizeof it.title, "%s", e->d_name);
+    it.size = du(p);
+    add(list, n, &it);
+  }
+  closedir(d);
+}
+
 void console_rescan(void) {
   installed_t *list = calloc(MAX_INSTALLED, sizeof *list);
   if (!list) return;
@@ -278,6 +337,7 @@ void console_rescan(void) {
     char eta[128];
     snprintf(eta, sizeof eta, "%s/etaHEN/games", !strcmp(drives[i].id, "internal") ? "/data" : drives[i].root);
     scan_dir(list, &n, eta, drives[i].id, 0);
+    if (!strncmp(drives[i].id, "usb", 3)) scan_usb_pkgs(list, &n, &drives[i]);
   }
   scan_ps4_apps(list, &n, "/user", "internal");
   for (int i = 0; i < 4; i++) {

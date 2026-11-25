@@ -49,7 +49,12 @@ export function Details({ id, state, api, games, setGames, notify, onKeys, refre
   if (error) return <div class="panel empty"><h2>Couldn't load this game</h2><p class="muted">{error}</p><button class="btn" onClick={() => history.back()} data-autofocus>Back</button></div>;
   if (!game) return <p class="muted">Loading…</p>;
 
-  const st = gameStatus(game, state);
+  const st = gameStatus(game, state, isPs4 ? chosen : undefined);
+  const where = st.installed && st.installed.kind === 'ps4-pkg'
+    ? `on ${space ? space.drive.label : st.installed.drive.toUpperCase()} as .pkg`
+    : `on this PS5 (${st.installed && st.installed.drive === 'internal' ? 'Internal SSD' : st.installed ? st.installed.drive.toUpperCase() : ''})`;
+  // PS4 updates: the patches only, added beside the game (nothing is replaced).
+  const patchFiles = isPs4 && files && files.files ? files.files.filter((f) => f.category === 'gp').map((f) => f.path) : [];
   const needed = game.sizeBytes || (files && files.totalBytes) || 0;
   const tooLarge = space && needed > space.free;
   const fwNeeded = game.requiredFirmware;
@@ -89,7 +94,7 @@ export function Details({ id, state, api, games, setGames, notify, onKeys, refre
     note = 'Paused. Resuming carries on from where it stopped.';
   } else if (st.status === 'downloaded') {
     button = <button class="big done" disabled><Icon d={ICONS.check} size={28} />Downloaded</button>;
-    note = `On this PS5 (${st.installed.drive === 'internal' ? 'Internal SSD' : st.installed.drive.toUpperCase()}) · ${st.installed.version ? `v${st.installed.version}, ` : ''}same version as on the NAS.`;
+    note = `${where[0].toUpperCase()}${where.slice(1)} · ${st.installed.version ? `v${st.installed.version}, ` : ''}same version as on the NAS.${st.installed.kind === 'ps4-pkg' ? ' Install it from there, or press □ for Install on this PS5.' : ''}`;
     noteClass = 'good-text';
   } else if (folderPs4) {
     button = <button class="big blocked" disabled><Icon d={ICONS.stop} size={28} />Can't install</button>;
@@ -104,8 +109,8 @@ export function Details({ id, state, api, games, setGames, notify, onKeys, refre
     note = `Needs ${formatBytes(needed)}; ${space.drive.label} has ${formatBytes(space.free)} free. Free up space in Storage${targets.length > 1 && !ps4Install ? ', or change the drive with □' : ''}.`;
     noteClass = 'bad-text';
   } else if (st.status === 'update') {
-    button = <button class="big btn-warn" disabled={busy} onClick={() => start({ replace: st.installed.kind === 'ps4-app' ? undefined : st.installed.path })} data-autofocus><Icon d={ICONS.up} size={28} />Update · {formatBytes(needed)}</button>;
-    note = `On this PS5 as v${st.installed.version}. The NAS has v${game.version}.${st.installed.kind !== 'ps4-app' ? ' The old copy is deleted once the new one is complete.' : ''}`;
+    button = <button class="big btn-warn" disabled={busy} onClick={() => start(isPs4 ? (patchFiles.length ? { files: patchFiles } : {}) : { replace: st.installed.path })} data-autofocus><Icon d={ICONS.up} size={28} />Update · {formatBytes(needed)}</button>;
+    note = `${where[0].toUpperCase()}${where.slice(1)}: v${st.installed.version}. The NAS has v${game.version}.${isPs4 ? ' Update gets the patch only.' : ' The old copy is deleted once the new one is complete.'}`;
     noteClass = 'warn-text';
   } else {
     button = <button class="big btn-primary" disabled={busy} onClick={() => start()} data-autofocus><Icon d={ICONS.down} size={28} />{ps4Install ? 'Install' : 'Download'}</button>;

@@ -3,7 +3,7 @@ import { ps5 } from '../api.js';
 import { Bar, Hints, Icon, ICONS, useAutofocus } from '../components.jsx';
 import { formatBytes } from '../util.js';
 
-const KIND = { image: 'exFAT image', folder: 'Folder', 'ps4-app': 'Installed PS4 game' };
+const KIND = { image: 'exFAT image', folder: 'Folder', 'ps4-app': 'Installed PS4 game', 'ps4-pkg': 'PS4 .pkg on a USB drive' };
 
 export function Storage({ state, refresh, notify, games }) {
   const [confirm, setConfirm] = useState(null);

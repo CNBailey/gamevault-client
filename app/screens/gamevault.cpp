@@ -1332,7 +1332,7 @@ class GameVault final : public app::Concept
         }
         else if (st.status == Status::downloaded)
         {
-            sub += " · on this PS5";
+            sub += st.installed && st.installed->kind == "ps4-pkg" ? " · .pkg on USB" : " · on this PS5";
             sub_color = Color::rgb(0x8BE5B5);
         }
         ui::text(list, f.regular, fit(f.regular, sub, 18, r.w), r.x, r.y + r.h + 60, 18, sub_color);
@@ -1548,6 +1548,22 @@ class GameVault final : public app::Concept
         return "internal";
     }
 
+    // The PS4 game's newest copy at a target: installed ("internal") or a .pkg on that USB drive.
+    const Installed *ps4_on(const Game &g, const std::string &target) const
+    {
+        const std::string tid = upper_ascii(g.title_id);
+        const Installed *best = nullptr;
+        for (const Installed &i : state_.installed)
+        {
+            if (tid.empty() || i.title_id != tid)
+                continue;
+            const bool match = target == "internal" ? i.kind == "ps4-app" : (i.kind == "ps4-pkg" && i.drive == target);
+            if (match && (!best || compare_versions(i.version, best->version) > 0))
+                best = &i;
+        }
+        return best;
+    }
+
     // Where PS4 games can go: installed on this PS5, or copied to a connected USB drive.
     std::vector<std::string> ps4_targets() const
     {
@@ -1594,10 +1610,23 @@ class GameVault final : public app::Concept
     MainAction main_action(const Game &g) const
     {
         MainAction a;
-        const GameStatus st = status_of(g, state_);
+        GameStatus st = status_of(g, state_);
         const bool ps4 = g.platform == "PS4";
         const std::string drive = detail_drive();
         const bool ps4_install = ps4 && drive == "internal"; // else: the .pkg files go to a USB drive
+        if (ps4 && !st.job)
+        {
+            // A PS4 game counts as there when it's where this download would go: installed
+            // on the PS5, or its .pkg in the top folder of the chosen USB drive.
+            st.installed = ps4_on(g, drive);
+            if (st.installed)
+                st.status = !g.version.empty() && !st.installed->version.empty() &&
+                                    compare_versions(g.version, st.installed->version) > 0
+                                ? Status::update
+                                : Status::downloaded;
+            else if (st.status == Status::downloaded || st.status == Status::update)
+                st.status = Status::download;
+        }
         const double free = free_on(drive);
         const double need = static_cast<double>(g.size);
         const std::string fw = detail_["requiredFirmware"].str(g.required_fw);
@@ -1625,8 +1654,14 @@ class GameVault final : public app::Concept
             a.fill = Color::rgb(0x3FCF8E, 0.16f);
             a.ink = Color::rgb(0x8BE5B5);
             a.enabled = false;
-            a.note = std::string("On this PS5 (") + drive_name(st.installed->drive) + ")" +
-                     (st.installed->version.empty() ? "" : " · v" + st.installed->version) + ", the same version as on the NAS.";
+            if (st.installed->kind == "ps4-pkg")
+                a.note = std::string("Saved on ") + drive_name(st.installed->drive) + " as .pkg" +
+                         (st.installed->version.empty() ? "" : " · v" + st.installed->version) +
+                         ", the same version as on the NAS. Install it from there" +
+                         (detail_targets().size() > 1 ? ", or press □ for Install on this PS5." : ".");
+            else
+                a.note = std::string("On this PS5 (") + drive_name(st.installed->drive) + ")" +
+                         (st.installed->version.empty() ? "" : " · v" + st.installed->version) + ", the same version as on the NAS.";
             a.note_color = Color::rgb(0x8BE5B5);
             return a;
         default:
@@ -1668,7 +1703,9 @@ class GameVault final : public app::Concept
             a.label = "Update · " + format_bytes(need);
             a.fill = kWarn;
             a.go = MainAction::update;
-            a.note = "On this PS5 as v" + st.installed->version + ". The NAS has v" + g.version + ".";
+            a.note = (st.installed->kind == "ps4-pkg" ? std::string("On ") + drive_name(st.installed->drive) + " as v"
+                                                       : std::string("On this PS5 as v")) +
+                     st.installed->version + ". The NAS has v" + g.version + (ps4 ? ": Update gets the patch only." : ".");
             a.note_color = Color::rgb(0xF5D58A);
             return a;
         }
@@ -1848,7 +1885,9 @@ class GameVault final : public app::Concept
                                                                 : "Downloading " + g->title);
                 break;
             case MainAction::update:
-                if (st.installed && st.installed->kind != "ps4-app")
+                // PS5: the older copy is deleted once the new one is in. Never for PS4 (a
+                // patch adds to the game; the base .pkg on a USB drive stays).
+                if (st.installed && g->platform == "PS5")
                     body += ",\"replace\":" + gv::json_quote(st.installed->path);
                 if (g->platform == "PS4")
                 {
@@ -2054,7 +2093,10 @@ class GameVault final : public app::Concept
                 w = f.semibold.measure(label, 24) + 56;
                 break;
             case DetailButton::remove:
-                label = "Delete from PS5";
+                {
+                    const GameStatus gs = status_of(*g, state_);
+                    label = gs.installed && gs.installed->kind == "ps4-pkg" ? "Delete .pkg from USB" : "Delete from PS5";
+                }
                 w = f.semibold.measure(label, 24) + 56;
                 break;
             }

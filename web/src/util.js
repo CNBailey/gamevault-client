@@ -38,12 +38,15 @@ export const ACTIVE = ['queued', 'downloading', 'verifying', 'paused'];
  * { status: 'download'|'downloaded'|'update'|'queued'|'downloading'|'paused'|'failed',
  *   installed, job }
  */
-export function gameStatus(game, state) {
+// target (PS4 games): "internal" counts only the installed game, a USB drive id only
+// the .pkg files in that drive's top folder. Without it, any copy counts.
+export function gameStatus(game, state, target) {
   if (!state) return { status: 'download' };
   const job = (state.downloads || []).find((d) => d.gameId === game.id && ACTIVE.includes(d.state));
   const failed = (state.downloads || []).find((d) => d.gameId === game.id && d.state === 'failed');
   const tid = String(game.titleId || '').toUpperCase();
-  const copies = tid ? (state.installed || []).filter((i) => String(i.titleId).toUpperCase() === tid) : [];
+  const copies = tid ? (state.installed || []).filter((i) => String(i.titleId).toUpperCase() === tid &&
+    (!target || (target === 'internal' ? i.kind === 'ps4-app' : i.kind === 'ps4-pkg' && i.drive === target))) : [];
   const installed = copies.sort((a, b) => compareVersions(b.version, a.version))[0] || null;
   if (job) {
     const status = job.state === 'paused' ? 'paused' : job.state === 'queued' ? 'queued' : 'downloading';

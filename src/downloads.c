@@ -752,7 +752,9 @@ int downloads_add(int64_t game_id, const char *files_json, const char *replace_p
   copy(j->drive, sizeof j->drive, target);
   const bool ps4_copy = ps4 && strcmp(j->drive, "internal");
   copy(j->state, sizeof j->state, "queued");
-  copy(j->replace, sizeof j->replace, replace_path);
+  /* PS5: the older copy is deleted once the new one is in. A PS4 update adds its
+     patch beside the game, so nothing is deleted. */
+  copy(j->replace, sizeof j->replace, strcmp(platform, "PS4") ? replace_path : "");
   j->created = now_ms();
 
   drive_t d;

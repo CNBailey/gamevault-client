@@ -67,6 +67,33 @@ with open(os.path.join(FILES, 'folder', 'eboot.bin'), 'wb') as f:
 with open(os.path.join(FILES, 'game.pkg'), 'wb') as f:
     f.write(os.urandom(1024))
 
+
+def ps4_pkg(path, content_id, version, category, title):
+    """A minimal PS4 .pkg: header, one entry (param.sfo), the sfo. Enough for GameVault to read."""
+    import struct
+    keys = [('APP_VER', version), ('CATEGORY', category), ('TITLE', title)]
+    ktab, dtab, ents = b'', b'', b''
+    for k, v in keys:
+        data = v.encode() + b'\0'
+        ents += struct.pack('<HHIII', len(ktab), 0x0204, len(data), len(data), len(dtab))
+        ktab += k.encode() + b'\0'
+        dtab += data
+    ktab += b'\0' * (-len(ktab) % 4)
+    koff = 20 + len(ents)
+    sfo = b'\0PSF' + struct.pack('<IIII', 0x101, koff, koff + len(ktab), len(keys)) + ents + ktab + dtab
+    head = bytearray(0x200)
+    struct.pack_into('>I', head, 0, 0x7F434E54)
+    struct.pack_into('>I', head, 0x10, 1)
+    struct.pack_into('>I', head, 0x18, 0x100)
+    head[0x40:0x40 + 36] = content_id.encode()
+    struct.pack_into('>IIIIII', head, 0x100, 0x1000, 0, 0, 0, 0x200, len(sfo))
+    with open(path, 'wb') as f:
+        f.write(bytes(head) + sfo + os.urandom(2048))
+
+
+ps4_pkg(os.path.join(FILES, 'hades.pkg'), 'EP9000-CUSA00002_00-0000000000000000', '01.00', 'gd', 'Hades')
+ps4_pkg(os.path.join(FILES, 'hades-patch.pkg'), 'EP9000-CUSA00002_00-0000000000000000', '01.10', 'gp', 'Hades')
+
 GAMES = {
     1: {'game': {'id': 1, 'title': 'Test Game', 'platform': 'PS5', 'titleId': 'PPSA12345', 'version': '01.000.002', 'path': '/games/PS5/' + IMAGE},
         'files': {'kind': 'ps5-exfat', 'files': [{'path': IMAGE, 'size': os.path.getsize(os.path.join(FILES, IMAGE)), 'disk': IMAGE}]}},
@@ -75,8 +102,8 @@ GAMES = {
             {'path': 'sce_sys/param.json', 'size': os.path.getsize(os.path.join(FILES, 'folder/sce_sys/param.json')), 'disk': 'folder/sce_sys/param.json'},
             {'path': 'eboot.bin', 'size': os.path.getsize(os.path.join(FILES, 'folder/eboot.bin')), 'disk': 'folder/eboot.bin'}]}},
     3: {'game': {'id': 3, 'title': 'Hades', 'platform': 'PS4', 'titleId': 'CUSA00002', 'version': '01.10', 'contentId': 'EP9000-CUSA00002_00-0000000000000000', 'path': '/games/PS4/Hades'},
-        'files': {'kind': 'ps4-pkg', 'files': [{'path': 'Hades.pkg', 'size': 1024, 'category': 'gd', 'disk': 'game.pkg'},
-                                               {'path': 'Hades patch.pkg', 'size': 1024, 'category': 'gp', 'disk': 'game.pkg'}]}},
+        'files': {'kind': 'ps4-pkg', 'files': [{'path': 'Hades.pkg', 'size': os.path.getsize(os.path.join(FILES, 'hades.pkg')), 'category': 'gd', 'disk': 'hades.pkg'},
+                                               {'path': 'Hades patch.pkg', 'size': os.path.getsize(os.path.join(FILES, 'hades-patch.pkg')), 'category': 'gp', 'disk': 'hades-patch.pkg'}]}},
     4: {'game': {'id': 4, 'title': 'Evil', 'platform': 'PS5', 'titleId': 'PPSA66666', 'version': '1', 'path': '/games/PS5/Evil'},
         'files': {'kind': 'ps5-folder', 'files': [{'path': '../../escape.txt', 'size': 10, 'disk': 'game.pkg'}]}},
     5: {'game': {'id': 5, 'title': 'Broken', 'platform': 'PS5', 'titleId': 'PPSA77777', 'version': '1', 'path': '/games/PS5/x'},
@@ -323,10 +350,19 @@ try:
     j = wait(jid, ['done', 'failed'])
     newlog = open(os.path.join(WORK, 'log.txt')).read()[log_mark:]
     check('PS4 copied to the USB root', j['state'] == 'done' and j['drive'] == 'usb0'
-          and os.path.getsize(os.path.join(ROOT, 'mnt/usb0/Hades.pkg')) == 1024
+          and os.path.getsize(os.path.join(ROOT, 'mnt/usb0/Hades.pkg')) == os.path.getsize(os.path.join(FILES, 'hades.pkg'))
           and os.path.exists(os.path.join(ROOT, 'mnt/usb0/Hades patch.pkg'))
           and 'INSTALL PKG' not in newlog, (j, newlog[-400:]))
     check('PS4 USB copy note', 'top folder' in j.get('note', ''), j)
+    call('POST', '/api/rescan', {})
+    found = [i for i in call('GET', '/api/state')[1]['installed'] if i['titleId'] == 'CUSA00002' and i['drive'] == 'usb0']
+    check('PS4 .pkg files on the USB drive are found', sorted(i['version'] for i in found) == ['01.00', '01.10']
+          and all(i['kind'] == 'ps4-pkg' for i in found), found)
+    # An update with a replace path must not delete the base .pkg
+    jid = call('POST', '/api/downloads', {'gameId': 3, 'drive': 'usb0', 'files': ['Hades patch.pkg'],
+                                          'replace': '/mnt/usb0/Hades.pkg'})[1]['id']
+    j = wait(jid, ['done', 'failed'])
+    check('PS4 update keeps the base .pkg', j['state'] == 'done' and os.path.exists(os.path.join(ROOT, 'mnt/usb0/Hades.pkg')), j)
     call('PUT', '/api/settings', {'ps4Drive': 'internal'})
 
     # The old tile's folder (PPSA99687) is removed: it is checked at start-up,
